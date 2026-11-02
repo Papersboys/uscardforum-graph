@@ -14,12 +14,12 @@ GitHub Pages hosts the frontend and reads verified-public snapshots from private
 
 ## Current status / 当前状态
 
-- Routine collection supports **up to 50 requests per ten-minute batch**. Local requests are spaced at least one second apart (`FORUM_REQUEST_INTERVAL_MS=1000`). Initial backfill runs continuously with persisted progress; rate-limit waits still apply.
+- Routine collection supports **up to 50 requests per ten-minute batch**. Local requests are spaced 0.5–1 second apart (`FORUM_REQUEST_INTERVAL_MS=500`, `FORUM_REQUEST_JITTER_MS=500`). Initial backfill runs continuously with persisted progress; rate-limit waits still apply.
 - Collected data loads into the graph automatically on page open and after a new server save. There is no JSON import workflow.
 - The backend supports authorized read-only user API access and S3 persistence. Without configured access or collected data, it displays a labeled fictional demo. The Pages site uses the public snapshot API when configured; demo-only mode remains available when no API URL is set.
 - The frontend is published on GitHub Pages. The active collector runs locally, so the computer and Node server must remain running. AWS Lambda and the EventBridge schedule were deleted at the operator’s request.
 
-支持断点续传和自动更新本地图谱，采集请求间隔至少 1 秒。当前使用本地首次回填，S3 保存进度与帖子；自动定时任务未启用。
+支持断点续传和自动更新本地图谱，采集请求随机间隔 0.5–1 秒。当前使用本地首次回填，S3 保存进度与帖子；自动定时任务未启用。
 
 ## Run
 
@@ -67,7 +67,7 @@ Edit `.env`, then restart the server. Keep credentials in this gitignored file r
 | `FORUM_DAILY_ENABLED` | `true` | Initial automatic schedule setting. The legacy name remains; the interval is **ten minutes**, not daily. The UI's saved setting takes precedence on later starts. |
 | `FORUM_REQUEST_BUDGET` | `50` | Request limit per scheduled batch, clamped to 5–50. |
 
-The old `FORUM_DAILY_REQUEST_BUDGET` variable remains a fallback when `FORUM_REQUEST_BUDGET` is absent. Local request spacing defaults to one second and is configurable with `FORUM_REQUEST_INTERVAL_MS`. API keys, login-session bridging, or other access methods are not created by this project; browser cookies are not transferred to the server. The optional read-only user API authorization flow below can connect an existing forum account.
+The old `FORUM_DAILY_REQUEST_BUDGET` variable remains a fallback when `FORUM_REQUEST_BUDGET` is absent. Local request spacing defaults to 500ms plus up to 500ms of additive jitter, configurable with `FORUM_REQUEST_INTERVAL_MS` and `FORUM_REQUEST_JITTER_MS`. API keys, login-session bridging, or other access methods are not created by this project; browser cookies are not transferred to the server. The optional read-only user API authorization flow below can connect an existing forum account.
 
 ## Typical workflow / 使用流程
 
@@ -85,7 +85,7 @@ The initial demo uses fictional users and is always labeled. The **Forum synchro
 
 USCardForum's [terms](https://www.uscardforum.com/tos) restrict automated access. Collection is **disabled until access is configured**. The automatic scheduler waits without making forum requests; opening the page does not itself trigger a collection run. An ordinary forum login is not an API key or authorization for bulk collection. After obtaining permission, copy `.env.example` to `.env`, set `FORUM_SYNC_AUTHORIZED=true`, and supply authorized Discourse `FORUM_API_KEY` / `FORUM_API_USERNAME` if required. Use a dedicated non-admin account with only the topic access covered by that permission. Credentials remain server-side, never in browser code or git. Restart the server after configuration. `.env` is loaded at startup (Node 22+ recommended). Do not use login cookies or bypass access restrictions.
 
-The scheduler starts when due and access is configured; **Collect a batch now** starts an optional manual batch. Collected data appears automatically. Requests are sequential with a minimum one-second interval by default. HTTP 429 / 5xx retries use exponential waits and honor `Retry-After`; 401/403 stop immediately. Interrupted batches are saved and missing IDs retried on resume. Unavailable threads or incomplete post streams stop with a visible error rather than silently claiming completion. A persisted server job is enabled by default and waits for configured access. Each routine run makes at most 50 requests at the configured spacing, then saves its place for the next ten-minute interval. A completed discovery pass starts again on the next run to refresh threads. The frontend shows collection totals and status; collector controls are kept out of the public UI. The local API still supports pausing collection, which also disables the automatic schedule. Access/data errors hold the schedule until explicitly resumed. Progress polling every three seconds reads the local service only.
+The scheduler starts when due and access is configured; **Collect a batch now** starts an optional manual batch. Collected data appears automatically. Requests are sequential with a randomized 0.5–1s interval by default. HTTP 429 / 5xx retries use exponential waits and honor `Retry-After`; 401/403 stop immediately. Interrupted batches are saved and missing IDs retried on resume. Unavailable threads or incomplete post streams stop with a visible error rather than silently claiming completion. A persisted server job is enabled by default and waits for configured access. Each routine run makes at most 50 requests at the configured spacing, then saves its place for the next ten-minute interval. A completed discovery pass starts again on the next run to refresh threads. The frontend shows collection totals and status; collector controls are kept out of the public UI. The local API still supports pausing collection, which also disables the automatic schedule. Access/data errors hold the schedule until explicitly resumed. Progress polling every three seconds reads the local service only.
 
 The graph includes all collected topics, users, posts, and relationships without fixed preview caps. Public snapshots still exclude content that has not been verified public. Existing archive files persist even when a later pass cannot retrieve a topic; this is an archive, not a deletion-mirroring service. Protect the local data directory according to its contents.
 
@@ -214,7 +214,7 @@ The cloud worker runs in Lambda and uses EventBridge Scheduler, with S3 retainin
 
 ## Initial backfill / 首次全量回填
 
-`FORUM_INITIAL_BACKFILL=true` (default) selects a continuous first pass when the scheduler is enabled and working access is configured. It has no 50-request batch cap and uses the configured local request spacing (one second by default). Each topic/post batch and discovery checkpoint is saved to the configured storage, including S3. The first-pass completion flag persists in the checkpoint. A restarted server resumes this initial pass when its schedule is enabled; using Pause disables the schedule until you resume it. After the initial pass finishes, subsequent scheduled passes use the normal fifty-request budget per ten minutes.
+`FORUM_INITIAL_BACKFILL=true` (default) selects a continuous first pass when the scheduler is enabled and working access is configured. It has no 50-request batch cap and uses the configured local request spacing (0.5–1 second with jitter by default). Each topic/post batch and discovery checkpoint is saved to the configured storage, including S3. The first-pass completion flag persists in the checkpoint. A restarted server resumes this initial pass when its schedule is enabled; using Pause disables the schedule until you resume it. After the initial pass finishes, subsequent scheduled passes use the normal fifty-request budget per ten minutes.
 
 The **Start / resume initial backfill / 开始／继续首次回填** action (`POST /api/sync/backfill`, with the same custom header) can explicitly run a continuous pass. It stops on access, storage, pagination, or incomplete-topic errors and retains progress. The graph preview continues to update automatically while the larger archive grows.
 
@@ -286,8 +286,10 @@ Set the public GitHub repository variable `FORUM_SNAPSHOT_BASE_URL` to the distr
 
 Arrows go from the identified reacting user to the post author. `heart`, `+1` and `thumbsup` are likes; `-1` and `thumbsdown` are downvotes. Other emoji reactions are not classified as either. A user contributes at most one edge increment per post and interaction type; different like variants are deduplicated. Source evidence preserves the actor, original post author, reaction identifier and post link. Reaction-only users have zero sampled posts.
 
-The read-only collector requests `/discourse-reactions/posts/{id}/reactions-users.json` only for posts with relevant reaction totals. Existing archives are enriched first, with each post saved to S3 before proceeding; restarts continue unfinished enrichment. New local collection uses the configured request budget and one-second spacing by default. Access denial holds collection. No reaction is submitted or changed.
+The read-only collector requests `/discourse-reactions/posts/{id}/reactions-users.json` only for posts with relevant reaction totals. Existing archives are enriched first, with each post saved to S3 before proceeding; restarts continue unfinished enrichment. New local collection uses the configured request budget and 0.5–1 second randomized spacing by default. Access denial holds collection. No reaction is submitted or changed.
 
 Forum responses can limit the number of reacting users returned. Only explicitly returned usernames become relationships, and partial coverage is marked in sampling notes. Anonymous totals, other emoji, flags and moderation actions never become inferred like/downvote edges. Public snapshots retain the same category and whisper exclusions.
 
 点赞与点踩的箭头从操作人指向帖子作者；只有明确返回用户名的记录才计入关系。历史帖子逐步补齐，进度保存到 S3。部分列表受论坛限制，页面会提示不完整；不会根据总数猜测操作人。
+
+Request jitter is sampled once per request and added to the minimum interval. Retries add 0–1 second of jitter after the longer of exponential backoff and `Retry-After`; jitter never shortens the server’s required wait. Requests remain sequential.

@@ -1,3 +1,4 @@
+import {requestGap,retryWait} from './request-pacing';
 import {postActors,reactionDetails,reactionSignature,mergeReactionPost} from './reactions';
 import {ArchiveStore} from './storage.ts';
 import {buildGraph,type Post} from './graph.ts';
@@ -5,7 +6,7 @@ import {buildGraph,type Post} from './graph.ts';
 type TopicRef={id:number;title:string};
 type StoredTopic=TopicRef&{public?:boolean;posts:Post[];stream:number[];complete:boolean};
 type Checkpoint={page:number;pending:TopicRef[];visited:number[];finished:boolean;requests:number;updatedAt:string|null;initialPassComplete?:boolean;mode?:'backfill'|'batch'};
-export type SyncStatus={requestIntervalMs?:number;configured:boolean;state:'idle'|'running'|'paused'|'complete'|'error';page:number;topics:number;posts:number;users:number;requests:number;currentTopic:string|null;updatedAt:string|null;retryAt:string|null;error:string|null;mode:'backfill'|'batch';initialPassComplete:boolean};
+export type SyncStatus={requestIntervalMs?:number;requestJitterMs?:number;configured:boolean;state:'idle'|'running'|'paused'|'complete'|'error';page:number;topics:number;posts:number;users:number;requests:number;currentTopic:string|null;updatedAt:string|null;retryAt:string|null;error:string|null;mode:'backfill'|'batch';initialPassComplete:boolean};
 const fresh=():Checkpoint=>({page:0,pending:[],visited:[],finished:false,requests:0,updatedAt:null});
 export class ForumSync {
  private checkpoint=fresh();
@@ -15,7 +16,7 @@ export class ForumSync {
  private retryAt:string|null=null;
  private running?:Promise<void>;
  private controller?:AbortController;
- private lastRequest=0;
+ private nextRequestAt=0;
  private requestLimit=Infinity;
  private deadline=Infinity;
  private runRequests=0;
@@ -23,7 +24,7 @@ export class ForumSync {
  private userCounts=new Map<string,number>();
  private topicIds=new Set<number>();
  private ready:Promise<void>;
- constructor(private directory:string,private options:{authorized:boolean;collectReactions?:boolean;userKey?:string;key?:string;username?:string;interval?:number;fetch?:typeof fetch;publicCategoryIds?:Set<number>;onProgress?:()=>Promise<void>},private archive=new ArchiveStore(directory)){this.ready=this.restore();}
+ constructor(private directory:string,private options:{authorized:boolean;collectReactions?:boolean;userKey?:string;key?:string;username?:string;interval?:number;jitter?:number;random?:()=>number;fetch?:typeof fetch;publicCategoryIds?:Set<number>;onProgress?:()=>Promise<void>},private archive=new ArchiveStore(directory)){this.ready=this.restore();}
  private async restore(){
   try{this.checkpoint=JSON.parse(await this.archive.read('checkpoint.json'));this.state=this.checkpoint.finished?'complete':'paused';}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;await this.save();}
   for(const file of await this.archive.topics()){if(!/^\d+\.json$/.test(file))continue;const topic:StoredTopic=JSON.parse(await this.archive.read(`topics/${file}`));this.topicIds.add(topic.id);this.counts.topics++;this.counts.posts+=topic.posts.length;for(const post of topic.posts)for(const id of postActors(post))this.userCounts.set(id,(this.userCounts.get(id)??0)+1);}
@@ -31,27 +32,27 @@ export class ForumSync {
  }
  private async atomic(file:string,value:unknown){await this.archive.write(file,value);}
  private async save(){await this.atomic('checkpoint.json',this.checkpoint);}
- async status():Promise<SyncStatus>{await this.ready;return {requestIntervalMs:this.options.interval??3000,configured:this.options.authorized,state:this.state,page:this.checkpoint.page,...this.counts,requests:this.checkpoint.requests,currentTopic:this.currentTopic,updatedAt:this.checkpoint.updatedAt,retryAt:this.retryAt,error:this.error,mode:this.checkpoint.mode??'batch',initialPassComplete:this.checkpoint.initialPassComplete??false};}
+ async status():Promise<SyncStatus>{await this.ready;return {requestIntervalMs:this.options.interval??3000,requestJitterMs:this.options.jitter??0,configured:this.options.authorized,state:this.state,page:this.checkpoint.page,...this.counts,requests:this.checkpoint.requests,currentTopic:this.currentTopic,updatedAt:this.checkpoint.updatedAt,retryAt:this.retryAt,error:this.error,mode:this.checkpoint.mode??'batch',initialPassComplete:this.checkpoint.initialPassComplete??false};}
  async start(options:{maxRequests?:number;mode?:'backfill'|'batch';bounded?:boolean;deadline?:number}={}){await this.ready;if(!this.options.authorized)throw new Error('authorization_required');if(this.running)return this.status();if(this.checkpoint.finished)this.checkpoint={...fresh(),initialPassComplete:this.checkpoint.initialPassComplete};this.checkpoint.mode=options.mode??'batch';this.requestLimit=options.mode==='backfill'&&!options.bounded?Infinity:options.maxRequests??Infinity;this.deadline=options.deadline??Infinity;this.runRequests=0;this.state='running';this.error=null;this.controller=new AbortController();this.running=this.run().catch(async(e)=>{if(this.controller?.signal.aborted||e instanceof SyncError&&e.code==='budget_reached'){this.state='paused';}else{this.state='error';this.error=e instanceof SyncError?e.code:'network_or_storage_error';}await this.save();}).finally(async()=>{this.running=undefined;this.currentTopic=null;this.retryAt=null;if(this.state==='running'&&this.checkpoint.finished)this.state='complete';await this.options.onProgress?.();});void this.running.catch(()=>{this.state='error';this.error='storage_error';});return this.status();}
  async waitUntilIdle(){await this.running;}
  async pause(){await this.ready;this.controller?.abort();await this.running;return this.status();}
  private async sleep(ms:number){const signal=this.controller!.signal;signal.throwIfAborted();await new Promise<void>((resolve,reject)=>{const abort=()=>{clearTimeout(timer);reject(new Error('paused'));};const timer=setTimeout(()=>{signal.removeEventListener('abort',abort);resolve();},ms);signal.addEventListener('abort',abort,{once:true});});}
  private async request(route:string):Promise<any>{
   for(let attempt=0;attempt<4;attempt++){
-   if(this.runRequests>=this.requestLimit||Math.max(Date.now(),this.lastRequest+(this.options.interval??3000))+30000>=this.deadline)throw new SyncError('budget_reached');
-   await this.sleep(Math.max(0,this.lastRequest+(this.options.interval??3000)-Date.now()));
+   if(this.runRequests>=this.requestLimit||Math.max(Date.now(),this.nextRequestAt)+30000>=this.deadline)throw new SyncError('budget_reached');
+   await this.sleep(Math.max(0,this.nextRequestAt-Date.now()));
    const headers:Record<string,string>={Accept:'application/json','User-Agent':'ForumAtlas/1.0 (authorized topic synchronization)'};
    if(this.options.userKey)headers['User-Api-Key']=this.options.userKey;
    else if(this.options.key){headers['Api-Key']=this.options.key;headers['Api-Username']=this.options.username??'system';}
-   if(this.runRequests>=this.requestLimit||Math.max(Date.now(),this.lastRequest+(this.options.interval??3000))+30000>=this.deadline)throw new SyncError('budget_reached');
-   this.lastRequest=Date.now();this.checkpoint.requests++;this.runRequests++;
+   if(this.runRequests>=this.requestLimit||Math.max(Date.now(),this.nextRequestAt)+30000>=this.deadline)throw new SyncError('budget_reached');
+   this.nextRequestAt=Date.now()+requestGap(this.options.interval??3000,this.options.jitter??0,this.options.random);this.checkpoint.requests++;this.runRequests++;
    const response=await (this.options.fetch??fetch)('https://www.uscardforum.com'+route,{headers,redirect:'error',signal:AbortSignal.any([this.controller!.signal,AbortSignal.timeout(30000)])});
    if(response.status===401||response.status===403)throw new SyncError('access_denied');
    if(response.status===404)throw new SyncError('topic_unavailable');
    if(response.status===429||response.status>=500){
     if(attempt===3)throw new SyncError(response.status===429?'rate_limited':'forum_unavailable');
     const retry=response.headers.get('retry-after');const seconds=Number(retry);const delay=retry?(Number.isFinite(seconds)?seconds*1000:Date.parse(retry)-Date.now()):0;
-    const wait=Math.max(30000*2**attempt,Number.isFinite(delay)?delay:0);this.retryAt=new Date(Date.now()+wait).toISOString();if(Date.now()+wait+30000>=this.deadline)throw new SyncError('budget_reached');await this.sleep(wait);this.retryAt=null;continue;
+    const wait=retryWait(attempt,delay,this.options.random);this.retryAt=new Date(Date.now()+wait).toISOString();if(Date.now()+wait+30000>=this.deadline)throw new SyncError('budget_reached');await this.sleep(wait);this.retryAt=null;continue;
    }
    if(!response.ok)throw new SyncError('forum_unavailable');
    return response.json();
