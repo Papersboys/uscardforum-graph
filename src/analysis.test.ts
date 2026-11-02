@@ -1,0 +1,11 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {shortestPath,mutualConnections,pathIncludesEdge,edgesCsv} from './analysis';
+import type {Edge} from '../server/graph';
+const edge=(from:string,to:string):Edge=>({from,to,type:'reply',weight:1,evidence:[]});
+const edges=[edge('a','b'),edge('b','c'),edge('c','d'),edge('a','e'),edge('e','d'),edge('d','a'),edge('a','b')];
+test('finds a shortest unweighted path and respects interaction direction',()=>{assert.deepEqual(shortestPath(edges,'a','d',true)?.nodes,['a','e','d']);assert.deepEqual(shortestPath(edges,'a','d')?.nodes,['a','d']);assert.equal(shortestPath([edge('a','b')],'b','a',true),null);assert.deepEqual(shortestPath([edge('a','b')],'b','a')?.nodes,['b','a']);});
+test('handles disconnected users, cycles, and same-user paths',()=>{assert.equal(shortestPath(edges,'a','isolated'),null);assert.deepEqual(shortestPath(edges,'a','a')?.nodes,['a']);assert.deepEqual(shortestPath(edges,'d','c',true)?.nodes,['d','a','b','c']);});
+test('mutual connections are unique and exclude endpoints',()=>{assert.deepEqual(mutualConnections([edge('a','x'),edge('x','a'),edge('b','x'),edge('a','b'),edge('a','y')],'a','b'),['x']);});
+test('highlights only consecutive path edges with the requested direction',()=>{const path={nodes:['a','b','c'],directed:true};assert.equal(pathIncludesEdge(path,edge('a','b')),true);assert.equal(pathIncludesEdge(path,edge('b','a')),false);assert.equal(pathIncludesEdge({...path,directed:false},edge('b','a')),true);assert.equal(pathIncludesEdge(path,edge('a','c')),false);});
+test('CSV exports preserve quotes and prevent formula execution',()=>{const csv=edgesCsv([edge('a','b')],new Map([['a','=SUM(1,2)'],['b','a"b']]));assert.ok(csv.startsWith('\ufeff'));assert.ok(csv.includes('"\'=SUM(1,2)"'));assert.ok(csv.includes('"a""b"'));});

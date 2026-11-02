@@ -1,0 +1,3 @@
+import type {Dataset} from '../server/graph';
+const names=['MapleMiles','CloudWalker','点数研究员','PacificBlue','小熊旅人','CardCollector','山海之间','MochiCat','FlyWithMe','北美小透明','星河漫游','CoffeeAndMiles','LuckyPanda','SeattleRain','ChaseTheSun','旅行青蛙','BlueJay','杏仁拿铁','WeekendNomad','里程日记','OakAndOcean','月亮邮差','SnowyPeak','TaroMilk'];
+export const demo:Dataset={mode:'demo',fetchedAt:'',topics:8,warnings:[],users:names.map((username,i)=>({id:`demo${i}`,username,posts:6+(i*13)%47})),edges:names.flatMap((_,i)=>[1,3,...(i%3===0?[7]:[])].map((offset,j)=>({from:`demo${i}`,to:`demo${(i+offset)%names.length}`,type:j===1?'mention' as const:'reply' as const,weight:1+(i*3+j)%9,evidence:[]})))};

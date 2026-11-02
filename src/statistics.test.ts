@@ -1,0 +1,9 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import type {Dataset,Edge} from '../server/graph';
+import {networkStatistics} from './statistics';
+const edge=(from:string,to:string,weight=1,type:Edge['type']='reply'):Edge=>({from,to,weight,type,evidence:[]});
+const dataset=(edges:Edge[]):Dataset=>({mode:'live',fetchedAt:'',topics:0,users:['a','b','c','d'].map(id=>({id,username:id,posts:1})),edges,warnings:[]});
+test('deduplicates types for density and reciprocity, and counts weighted direction separately',()=>{const data=dataset([edge('a','b',3),edge('a','b',2,'mention'),edge('b','a',1),edge('b','c',4)]);const stats=networkStatistics(data,data.edges);assert.equal(stats.total,10);assert.equal(stats.directedPairs,3);assert.equal(stats.density,.25);assert.equal(stats.pairs,2);assert.equal(stats.mutualPairs,1);assert.equal(stats.active,3);assert.equal(stats.isolated,1);assert.deepEqual(stats.components.map(g=>g.length),[3,1]);assert.equal(stats.averageConnections,1);assert.equal(stats.ranked.find(u=>u.id==='a')?.outgoing,5);assert.equal(stats.ranked.find(u=>u.id==='a')?.incoming,1);assert.deepEqual(stats.mix,{reply:8,mention:2});assert.deepEqual(stats.distribution,[1,3,0,0]);});
+test('empty filters retain users as isolates without NaN metrics',()=>{const data=dataset([edge('a','b')]);const stats=networkStatistics(data,[]);assert.equal(stats.total,0);assert.equal(stats.active,0);assert.equal(stats.isolated,4);assert.equal(stats.components.length,4);assert.equal(stats.density,0);assert.equal(stats.averageConnections,0);});
+test('handles an empty dataset and disconnected components',()=>{const data=dataset([edge('a','b'),edge('c','d')]);assert.deepEqual(networkStatistics(data,data.edges).components.map(c=>c.length),[2,2]);const stats=networkStatistics({...data,users:[],edges:[]},[]);assert.equal(stats.density,0);assert.equal(stats.averageConnections,0);assert.deepEqual(stats.components,[]);});

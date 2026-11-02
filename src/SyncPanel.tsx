@@ -1,0 +1,31 @@
+import {useEffect,useRef,useState} from 'react';
+import type {DailyJob} from '../server/daily-job';
+import type {SyncStatus} from '../server/sync';
+import {localeTools} from './i18n';
+import type {Dataset} from '../server/graph';
+export default function SyncPanel({zh,onLoad}:{zh:boolean;onLoad:(data:Dataset)=>void}){
+ const {t,n,date}=localeTools(zh);
+ const [status,setStatus]=useState<(SyncStatus&{daily?:Awaited<ReturnType<DailyJob['status']>>})|null>(null),[error,setError]=useState(false),[busy,setBusy]=useState(false);
+ const onLoadRef=useRef(onLoad);onLoadRef.current=onLoad;
+ useEffect(()=>{let live=true,busy=false;let loadedVersion:string|null=null;const controller=new AbortController();
+  const update=async()=>{if(busy)return;busy=true;try{const response=await fetch('/api/sync',{signal:controller.signal});if(!response.ok)throw Error();const next=await response.json();if(!live)return;setStatus(next);
+   if(next.posts>0){const version=JSON.stringify([next.updatedAt,next.posts,next.topics,next.state]);if(version!==loadedVersion){const response=await fetch('/api/graph',{signal:controller.signal});if(!response.ok)throw Error();const graph:Dataset=await response.json();if(live&&graph.users.length){onLoadRef.current(graph);loadedVersion=version;}}}if(live)setError(false);
+  }catch{if(live)setError(true);}finally{busy=false;}};
+  void update();const timer=setInterval(update,3000);return()=>{live=false;controller.abort();clearInterval(timer);};},[]);
+ async function action(action:'start'|'pause'|'daily-enable'|'daily-disable'){setBusy(true);setError(false);try{const response=await fetch(`/api/sync/${action}`,{method:'POST',headers:{'X-Atlas-Request':'1'}});if(!response.ok)throw Error();const status=await fetch('/api/sync');if(!status.ok)throw Error();setStatus(await status.json());}catch{setError(true);}finally{setBusy(false);}}
+
+ const labels={idle:t('Ready','就绪'),running:t('Syncing','同步中'),paused:t('Paused','已暂停'),complete:t('Pass complete','本轮完成'),error:t('Needs attention','需要处理')};
+ const errors:Record<string,string>={access_denied:t('The forum denied access. Check authorized API access before resuming.','论坛拒绝访问。请检查已获授权的 API 访问权限后再继续。'),rate_limited:t('Rate limit reached. Collection is saved; resume later.','已触发频率限制，采集进度已保存，请稍后继续。'),forum_unavailable:t('The forum is unavailable. Progress is saved.','论坛暂时不可用，进度已保存。'),pagination_stalled:t('The topic list repeated a page. Progress is saved; check API pagination before resuming.','话题列表返回了重复页面，进度已保存。请检查 API 分页后再继续。'),incomplete_topic:t('Some post IDs were unavailable. The partial topic is saved; check access before resuming.','部分帖子无法读取，已保存话题的现有内容。请检查权限后继续。')};
+ return <section className="sync-panel" aria-label={t('Forum synchronization','论坛同步')}>
+  <div className="sync-heading"><div><h2>{t('Collect conversations, grow the graph','持续收录话题，扩展用户图谱')}</h2><p>{t('Resumable topic discovery and complete post streams. Existing data stays available while syncing.','逐页发现话题并读取完整帖子流，支持断点续传，同步时仍可浏览已有数据。')}</p></div><span className={`sync-state ${status?.state==='running'?'active':''}`}>{status?labels[status.state]:t('Connecting…','正在连接…')}</span></div>
+  {status?.daily&&<div className="daily-schedule"><div><strong>{t('Automatic collection','自动增量收录')}</strong><p>{!status.daily.enabled?t('Schedule paused.','自动计划已暂停。'):status.daily.waitingForAccess?t('Schedule enabled · waiting for configured access.','自动计划已开启 · 等待配置访问方式。'):status.daily.blockedReason?t('Schedule stopped after an error. Check access, then resume.','计划因错误停止，请检查访问方式后恢复。'):status.daily.running?t('Current batch is running.','当前批次正在运行。'):t('Next batch: ','下次执行：')+date(status.daily.nextRunAt)}</p><small>{t(`Up to ${n(status.daily.maxRequests)} requests per 10 minutes · 12 seconds apart · resumes saved progress.`,`每 10 分钟最多 ${n(status.daily.maxRequests)} 次请求 · 间隔 12 秒 · 从已保存进度继续。`)}</small>{status.daily.lastFinishedAt&&<small className="daily-last">{t('Last batch: ','上次批次：')}{date(status.daily.lastFinishedAt)}</small>}</div><button disabled={busy} onClick={()=>action(status.daily?.enabled&&!status.daily.blockedReason?'daily-disable':'daily-enable')}>{status.daily.enabled&&!status.daily.blockedReason?t('Pause scheduled job','暂停自动任务'):t('Enable scheduled job','开启自动任务')}</button></div>}
+  <div className="sync-counts"><span><strong>{n(status?.topics??0)}</strong>{t('collected topics','已收录话题')}</span><span><strong>{n(status?.posts??0)}</strong>{t('posts','帖子')}</span><span><strong>{n(status?.users??0)}</strong>{t('discovered users','已发现用户')}</span><span><strong>{n(status?.page??0)}</strong>{t('topic pages visited','已读取话题页')}</span></div>
+  {!status?.configured&&<p className="sync-note">{t('Setup required: the forum’s terms restrict automated crawling. An authorized operator must configure server access first. Collection waits until access is configured.','需要配置：论坛条款限制自动抓取，请由获得授权的操作人员先配置服务端访问。配置完成前不会发起采集。')} <a href="https://www.uscardforum.com/tos" target="_blank" rel="noreferrer">{t('Forum terms','论坛条款')}</a></p>}
+  {status?.currentTopic&&<p className="sync-current">{t('Reading: ','正在读取：')}{status.currentTopic}</p>}
+  {status?.retryAt&&<p role="status">{t('Respecting the rate limit. Next attempt: ','正在等待频率限制解除，下次尝试：')}{date(status.retryAt)}</p>}
+  {status?.error&&<p role="alert" className="sync-error">{errors[status.error]??t('Synchronization stopped. Check server access and storage; collected data is saved.','同步已停止。请检查服务端访问权限与存储；已采集数据已保存。')}</p>}
+  {error&&<p role="alert" className="sync-error">{t('Could not contact the sync service. Your current graph is unchanged.','无法连接同步服务，当前关系图已保留。')}</p>}
+  <div className="sync-actions"><button className="primary" disabled={busy||!status?.configured} onClick={()=>action(status?.state==='running'?'pause':'start')}>{status?.state==='running'?t('Pause collection','暂停采集'):status?.state==='complete'?t('Start a new pass','开始新一轮'):status?.state==='idle'?t('Collect a batch now','立即收录一批'):t('Resume sync','继续同步')}</button><span className="auto-load-label">{t('Collected data appears in the graph automatically.','已收录数据会自动加载到图谱。')}</span><small>{t('Graph preview: up to 200 topics / 2,000 users. Full collected threads stay on the server.','图谱预览最多显示 200 个话题 / 2,000 位用户，完整采集内容保存在服务端。')}</small></div>
+  {status?.updatedAt&&<small>{t('Last saved: ','上次保存：')}{date(status.updatedAt)}</small>}
+ </section>;
+}
