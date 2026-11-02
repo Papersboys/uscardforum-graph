@@ -29,7 +29,7 @@ export async function handler(event:{resume?:boolean;diagnose?:boolean}={}){
   const response=await fetch('https://www.uscardforum.com/categories.json?include_subcategories=true',{headers:{Accept:'application/json','User-Agent':'ForumAtlas/1.0 (authorized topic synchronization)','User-Api-Key':key},redirect:'error',signal:AbortSignal.timeout(30000)});
   if(!response.ok)throw Error(`category_access_http_${response.status}`);
   const categories=publicCategoryIds(await response.json());
-  sync=new ForumSync(directory,{authorized:true,userKey:key,interval:12000,publicCategoryIds:categories,onProgress:()=>publish()},new ArchiveStore(directory,s3Remote(bucket),prefix));
+  sync=new ForumSync(directory,{authorized:true,collectReactions:true,userKey:key,interval:12000,publicCategoryIds:categories,onProgress:()=>publish()},new ArchiveStore(directory,s3Remote(bucket),prefix));
   await sync.status();await publish(true);
   await new Promise(resolve=>setTimeout(resolve,Math.max(0,metadataAt+12000-Date.now())));
   await sync.start({mode:(await sync.status()).initialPassComplete?'batch':'backfill',bounded:true,maxRequests:49,deadline:Date.now()+510000});await publish(true);await sync.waitUntilIdle();await publish(true);

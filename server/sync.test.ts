@@ -52,3 +52,11 @@ test('graph retains the full archive beyond former preview caps and public filte
  assert.ok(graph.users.some(u=>u.id==='user1_100'));assert.ok(!graph.warnings.some(w=>w.startsWith('Archive preview:')));
  const publicGraph=await sync.graph(true);assert.equal(publicGraph.topics,200);assert.equal(publicGraph.users.length,20200);assert.ok(!publicGraph.users.some(u=>u.id.startsWith('user1_')));
 }));
+
+test('reaction backfill resumes per post without duplicate actors and exposes partial coverage honestly',()=>fixture(async dir=>{
+ await mkdir(path.join(dir,'topics'));
+ await writeFile(path.join(dir,'topics','9.json'),JSON.stringify({id:9,title:'Existing',public:true,complete:true,stream:[1,2],posts:[{id:1,username:'Author',post_number:1,reactions:[{id:'heart',count:100}]},{id:2,username:'Author',post_number:2,reactions:[{id:'-1',count:1}]}]}));
+ const routes:string[]=[];const request:typeof fetch=async url=>{const route=new URL(String(url)).pathname;routes.push(route);if(route.includes('/posts/2/'))return json({reaction_users:[{id:'-1',count:1,users:[{username:'Critic'}]}]});if(route.includes('/posts/1/'))return json({reaction_users:[{id:'heart',count:100,users:[{username:'Fan'},{username:'Fan'}]}]});throw Error('Unexpected request '+route);};
+ let sync=new ForumSync(dir,{authorized:true,collectReactions:true,interval:0,fetch:request});await sync.start({maxRequests:1});await sync.waitUntilIdle();assert.equal((await sync.status()).state,'paused');assert.deepEqual(routes,['/discourse-reactions/posts/2/reactions-users.json']);assert.equal((await sync.graph()).edges[0].type,'dislike');
+ sync=new ForumSync(dir,{authorized:true,collectReactions:true,interval:0,fetch:request});await sync.start({maxRequests:1});await sync.waitUntilIdle();assert.equal(routes.length,2);const graph=await sync.graph(true);assert.equal(graph.edges.length,2);assert.equal(graph.users.length,3);assert.equal((await sync.status()).users,3);assert.ok(graph.warnings.some(w=>w.includes('limits reaction-user')));assert.ok(!graph.warnings.some(w=>w.startsWith('Reaction-user collection')));
+}));

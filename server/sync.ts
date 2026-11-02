@@ -1,3 +1,4 @@
+import {postActors,reactionDetails,reactionSignature,mergeReactionPost} from './reactions';
 import {ArchiveStore} from './storage.ts';
 import {buildGraph,type Post} from './graph.ts';
 
@@ -22,10 +23,10 @@ export class ForumSync {
  private userCounts=new Map<string,number>();
  private topicIds=new Set<number>();
  private ready:Promise<void>;
- constructor(private directory:string,private options:{authorized:boolean;userKey?:string;key?:string;username?:string;interval?:number;fetch?:typeof fetch;publicCategoryIds?:Set<number>;onProgress?:()=>Promise<void>},private archive=new ArchiveStore(directory)){this.ready=this.restore();}
+ constructor(private directory:string,private options:{authorized:boolean;collectReactions?:boolean;userKey?:string;key?:string;username?:string;interval?:number;fetch?:typeof fetch;publicCategoryIds?:Set<number>;onProgress?:()=>Promise<void>},private archive=new ArchiveStore(directory)){this.ready=this.restore();}
  private async restore(){
   try{this.checkpoint=JSON.parse(await this.archive.read('checkpoint.json'));this.state=this.checkpoint.finished?'complete':'paused';}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;await this.save();}
-  for(const file of await this.archive.topics()){if(!/^\d+\.json$/.test(file))continue;const topic:StoredTopic=JSON.parse(await this.archive.read(`topics/${file}`));this.topicIds.add(topic.id);this.counts.topics++;this.counts.posts+=topic.posts.length;for(const post of topic.posts)this.userCounts.set(post.username.toLowerCase(),(this.userCounts.get(post.username.toLowerCase())??0)+1);}
+  for(const file of await this.archive.topics()){if(!/^\d+\.json$/.test(file))continue;const topic:StoredTopic=JSON.parse(await this.archive.read(`topics/${file}`));this.topicIds.add(topic.id);this.counts.topics++;this.counts.posts+=topic.posts.length;for(const post of topic.posts)for(const id of postActors(post))this.userCounts.set(id,(this.userCounts.get(id)??0)+1);}
   this.counts.users=this.userCounts.size;
  }
  private async atomic(file:string,value:unknown){await this.archive.write(file,value);}
@@ -60,9 +61,24 @@ export class ForumSync {
   await this.atomic(`topics/${topic.id}.json`,topic);
   if(!this.topicIds.has(topic.id)){this.topicIds.add(topic.id);this.counts.topics++;}
   this.counts.posts+=topic.posts.length-previous.length;
-  for(const post of previous){const id=post.username.toLowerCase(),count=(this.userCounts.get(id)??0)-1;if(count)this.userCounts.set(id,count);else this.userCounts.delete(id);}
-  for(const post of topic.posts){const id=post.username.toLowerCase();this.userCounts.set(id,(this.userCounts.get(id)??0)+1);}
+  for(const post of previous)for(const id of postActors(post)){const count=(this.userCounts.get(id)??0)-1;if(count)this.userCounts.set(id,count);else this.userCounts.delete(id);}
+  for(const post of topic.posts)for(const id of postActors(post))this.userCounts.set(id,(this.userCounts.get(id)??0)+1);
   this.counts.users=this.userCounts.size;this.checkpoint.updatedAt=new Date().toISOString();await this.options.onProgress?.();
+ }
+ private async enrichReactions(topic:StoredTopic){
+  const pending=topic.posts.filter(p=>reactionSignature(p)&&p.atlas_reaction_signature!==reactionSignature(p)).sort((a,b)=>Number(b.reactions?.some(r=>r.id==='-1'))-Number(a.reactions?.some(r=>r.id==='-1')));
+  for(const post of pending){
+   const data=await this.request(`/discourse-reactions/posts/${post.id}/reactions-users.json`);
+   const details=reactionDetails(data),previous=topic.posts;
+   topic.posts=topic.posts.map(p=>p.id===post.id?{...p,atlas_reactions:details,atlas_reaction_signature:reactionSignature(p)}:p);
+   await this.store(topic,previous);
+  }
+ }
+ private async backfillReactions(){
+  const topics:StoredTopic[]=[];
+  for(const file of await this.archive.topics()){if(!/^\d+\.json$/.test(file))continue;const topic:StoredTopic=JSON.parse(await this.archive.read(`topics/${file}`));if(topic.posts.some(p=>reactionSignature(p)&&p.atlas_reaction_signature!==reactionSignature(p)))topics.push(topic);}
+  topics.sort((a,b)=>Number(b.posts.some(p=>p.reactions?.some(r=>r.id==='-1')))-Number(a.posts.some(p=>p.reactions?.some(r=>r.id==='-1'))));
+  for(const topic of topics){this.currentTopic=topic.title;await this.enrichReactions(topic);}
  }
  private async topic(ref:TopicRef){
   this.currentTopic=ref.title;
@@ -75,7 +91,7 @@ export class ForumSync {
   const posts=new Map<number,Post>();
   const streamIds=new Set(stream);
   for(const p of previous&&!previous.complete?previous.posts:[])if(streamIds.has(p.id))posts.set(p.id,p);
-  for(const p of data.post_stream?.posts??[])posts.set(p.id,p);
+  for(const p of data.post_stream?.posts??[])posts.set(p.id,mergeReactionPost(previous?.posts.find(old=>old.id===p.id),p));
   const topic:StoredTopic={...ref,public:this.options.publicCategoryIds?.has(data.category_id)===true&&data.visible!==false&&(!data.archetype||data.archetype==='regular'),title:data.title??ref.title,stream,posts:[...posts.values()],complete:false};
   let old=previous?.posts??[];await this.store(topic,old);old=topic.posts;
   const missing=stream.filter(id=>!posts.has(id));
@@ -83,15 +99,17 @@ export class ForumSync {
    const query=missing.slice(i,i+20).map(id=>`post_ids[]=${id}`).join('&');
    const batch=await this.request(`/t/${ref.id}/posts.json?${query}`);
    if(!Array.isArray(batch.post_stream?.posts))throw new SyncError('invalid_response');
-   for(const p of batch.post_stream.posts)posts.set(p.id,p);
+   for(const p of batch.post_stream.posts)posts.set(p.id,mergeReactionPost(previous?.posts.find(old=>old.id===p.id),p));
    topic.posts=[...posts.values()];await this.store(topic,old);old=topic.posts;
   }
   // Missing IDs can indicate deleted/hidden posts. Never call a partial topic complete.
   if(stream.some(id=>!posts.has(id)))throw new SyncError('incomplete_topic');
+  if(this.options.collectReactions){await this.enrichReactions(topic);old=topic.posts;}
   topic.complete=true;await this.store(topic,old);
  }
  private async run(){
   await this.save();
+  if(this.options.collectReactions)await this.backfillReactions();
   const visited=new Set(this.checkpoint.visited);
   while(true){
    this.controller!.signal.throwIfAborted();
@@ -117,6 +135,8 @@ export class ForumSync {
   for(const file of files){const topic:StoredTopic=JSON.parse(await this.archive.read(`topics/${file}`));if(publicOnly&&!topic.public)continue;topics.push(publicOnly?{...topic,posts:topic.posts.filter(p=>(p as Post&{post_type?:number}).post_type===undefined||(p as Post&{post_type?:number}).post_type===1)}:topic);}
   const graph=buildGraph(topics);
   graph.users.sort((a,b)=>b.posts-a.posts);
+  if(topics.some(t=>t.posts.some(p=>reactionSignature(p)&&p.atlas_reaction_signature!==reactionSignature(p))))graph.warnings.push('Reaction-user collection is incomplete; only identified reactions are shown.');
+  if(topics.some(t=>t.posts.some(p=>p.atlas_reactions?.some(r=>r.count>r.users.length))))graph.warnings.push('The forum limits reaction-user lists; some reacting users are unavailable.');
   if(!this.checkpoint.finished)graph.warnings.push('Synchronization is incomplete; this is collected data only.');
   if(topics.some(t=>!t.complete))graph.warnings.push('Some collected topics have incomplete post streams.');
   return graph;

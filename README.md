@@ -2,7 +2,7 @@
 
 A bilingual USCardForum interaction explorer built with React, TypeScript, Vite, Express, and [Relation Graph](https://relation-graph.com/docs/start-react/).
 
-美卡论坛用户互动图谱：自动收录话题中的用户、回复和 @提及，提供图谱浏览、用户详情、话题来源和互动分析。界面支持 English / 普通话（简体中文）及浅色 / 深色主题。
+美卡论坛用户互动图谱：自动收录话题中的用户、回复、@提及、点赞和点踩，提供图谱浏览、用户详情、话题来源和互动分析。界面支持 English / 普通话（简体中文）及浅色 / 深色主题。
 
 ## Live site / 在线预览
 
@@ -281,3 +281,13 @@ Local collection uses `FORUM_COLLECTOR_MODE=local` and `FORUM_PUBLISH_PUBLIC=tru
 Run `python3 scripts/deploy-snapshots.py` to provision the project-specific CloudFront origin access control and short-cache distribution. The bucket retains Block Public Access. Its policy permits only this distribution to read `public/graph.json` and `public/status.json`; raw `archive/` data and credentials cannot be read through it. CORS permits the Pages origin. The distribution caches snapshots for five seconds by default.
 
 Set the public GitHub repository variable `FORUM_SNAPSHOT_BASE_URL` to the distribution HTTPS URL and rebuild Pages. Frontend polling fetches only those two JSON files every ten seconds and when the browser becomes active. The member directory, graph and analysis share the same refreshed dataset. This serving path uses no Lambda or scheduled cloud collection.
+
+## Likes and downvotes / 点赞与点踩
+
+Arrows go from the identified reacting user to the post author. `heart`, `+1` and `thumbsup` are likes; `-1` and `thumbsdown` are downvotes. Other emoji reactions are not classified as either. A user contributes at most one edge increment per post and interaction type; different like variants are deduplicated. Source evidence preserves the actor, original post author, reaction identifier and post link. Reaction-only users have zero sampled posts.
+
+The read-only collector requests `/discourse-reactions/posts/{id}/reactions-users.json` only for posts with relevant reaction totals. Existing archives are enriched first, with each post saved to S3 before proceeding; restarts continue unfinished enrichment. New collection uses the same request budget and twelve-second spacing. Access denial holds collection. No reaction is submitted or changed.
+
+Forum responses can limit the number of reacting users returned. Only explicitly returned usernames become relationships, and partial coverage is marked in sampling notes. Anonymous totals, other emoji, flags and moderation actions never become inferred like/downvote edges. Public snapshots retain the same category and whisper exclusions.
+
+点赞与点踩的箭头从操作人指向帖子作者；只有明确返回用户名的记录才计入关系。历史帖子逐步补齐，进度保存到 S3。部分列表受论坛限制，页面会提示不完整；不会根据总数猜测操作人。

@@ -23,7 +23,7 @@ if(publishLocally&&userKey){const response=await fetch('https://www.uscardforum.
 const publish=publishLocally&&cloudRemote?localPublisher(cloudRemote,()=>sync,()=>daily.status()):undefined;
 const sync:ForumSync=new ForumSync(dataDirectory,{
  authorized:!cloudManaged&&(!!userKey||process.env.FORUM_SYNC_AUTHORIZED==='true'&&(!process.env.FORUM_API_KEY||!!process.env.FORUM_API_USERNAME)),userKey,
- publicCategoryIds:categories,onProgress:publish,
+ publicCategoryIds:categories,onProgress:publish,collectReactions:true,
  key:process.env.FORUM_API_KEY,username:process.env.FORUM_API_USERNAME,interval:12000,
 },archive);
 const budget=Number(process.env.FORUM_REQUEST_BUDGET??process.env.FORUM_DAILY_REQUEST_BUDGET??50);
