@@ -10,16 +10,16 @@ A bilingual USCardForum interaction explorer built with React, TypeScript, Vite,
 
 在线地址：**https://papersboys.github.io/uscardforum-graph/**
 
-GitHub Pages hosts the frontend and polls a read-only Lambda API for progressively collected public-topic snapshots. Raw archives and credentials remain private. 在线图谱会随云端采集进度自动更新；原始归档和凭据保持私有。
+GitHub Pages hosts the frontend. The Lambda API and EventBridge schedule have been removed; collection currently runs locally and saves to private S3. The Pages site cannot receive live updates from the removed API. Use [the local app](http://localhost:5173/) to follow current collection. 当前采集在本地运行并保存到私有 S3；Pages 原实时 API 已删除，请在本地页面查看采集进度。
 
 ## Current status / 当前状态
 
 - Routine collection supports **up to 50 requests per ten-minute batch, twelve seconds apart**. Initial backfill runs continuously at the same spacing, with persisted progress.
 - Collected data loads into the graph automatically on page open and after a new server save. There is no JSON import workflow.
 - The backend supports authorized read-only user API access and S3 persistence. Without configured access or collected data, it displays a labeled fictional demo. The Pages site uses the public snapshot API when configured; demo-only mode remains available when no API URL is set.
-- The frontend is published on GitHub Pages. Collection runs independently in Lambda, triggered by EventBridge Scheduler; your computer does not need to stay on.
+- The frontend is published on GitHub Pages. The active collector runs locally, so the computer and Node server must remain running. AWS Lambda and the EventBridge schedule were deleted at the operator’s request.
 
-已实现每 10 分钟一批、每批最多 50 次请求，间隔 12 秒；支持断点续传和自动更新图谱。Pages 页面从只读快照 API 自动加载已采集的公开话题，采集任务由云端 Lambda 独立运行。
+支持断点续传和自动更新本地图谱，采集请求间隔 12 秒。当前使用本地首次回填，S3 保存进度与帖子；自动定时任务未启用。
 
 ## Run
 
@@ -238,9 +238,11 @@ The layered ring layout places each distance level on a separate ring with a bad
 
 Local development keeps the normal `/` base path and API connection. To reproduce the Pages build locally, run `VITE_BASE_PATH=/uscardforum-graph/ VITE_STATIC_PREVIEW=true npm run build`.
 
-## Progressive Lambda backfill / 云端逐步回填
+## Optional Lambda architecture / 可选云端架构
 
-The deployed worker **`uscardforum-graph-backfill`** runs in `us-west-2`. EventBridge Scheduler **`uscardforum-backfill`** invokes it every ten minutes. Each invocation uses one category-visibility request and at most 49 collection requests, spaced twelve seconds apart. It stops initiating requests before a soft execution deadline so its 900-second Lambda timeout has room for saving state. Long backfills span many invocations and resume the same S3 checkpoint. The first pass has no overall request-count cap.
+**Not currently deployed.** Both Lambda functions and the EventBridge schedule have been removed. The following documents the optional implementation, not the current operating mode. 以下为保留的可选实现说明，当前未部署。
+
+The optional worker **`uscardforum-graph-backfill`** runs in `us-west-2`. EventBridge Scheduler **`uscardforum-backfill`** invokes it every ten minutes. Each invocation uses one category-visibility request and at most 49 collection requests, spaced twelve seconds apart. It stops initiating requests before a soft execution deadline so its 900-second Lambda timeout has room for saving state. Long backfills span many invocations and resume the same S3 checkpoint. The first pass has no overall request-count cap.
 
 The worker writes each topic/post batch to `archive/topics/`, then updates public graph/status snapshots while the invocation is still running (normally no more often than every ten seconds). **It does not wait for the whole backfill to finish.** Pages polls status every ten seconds and reloads the graph after saved progress changes. A prefix-scoped S3 conditional-write lease and reserved concurrency of one prevent overlapping cloud collectors. Do not run the local writer against the same archive; use `FORUM_COLLECTOR_MODE=cloud` for local read-through access to cloud snapshots.
 
@@ -264,8 +266,10 @@ aws lambda invoke \
 
 The manual event resumes a held error after the access/storage problem has been resolved. A live lease skips duplicate work. Scheduled errors hold further collection through `cloud/control.json` rather than repeatedly hitting a denied endpoint. Monitor `/aws/lambda/uscardforum-graph-backfill` in CloudWatch Logs; credential values are never logged.
 
-### Current cloud access limitation
+### Current collection mode / 当前采集方式
 
-The worker has been deployed and invoked, but USCardForum currently returns HTTP 403 for requests originating from AWS. Cloud collection is held in `cloud/control.json` to avoid repeated denied requests. The same authorized account works locally. Existing verified-public archive data is published through the read-only API and remains browsable. A 202 response from `lambda invoke` means the event was accepted, not that collection succeeded; check status and CloudWatch logs for the result.
+A diagnostic request confirmed that the same approved user key returns HTTP 200 locally but receives a Cloudflare challenge from AWS (`cf-mitigated: challenge`, HTTP 403). The precise Cloudflare rule is not known. Both project Lambda functions and the ten-minute EventBridge schedule were subsequently deleted; S3 archives were preserved.
 
-An explicitly approved temporary local fallback can use `FORUM_COLLECTOR_MODE=local` and `FORUM_PUBLISH_PUBLIC=true`. It verifies category visibility and publishes public-only snapshots throughout collection, while the Lambda collector remains held. This fallback requires the local server to stay running. Resume direct Lambda collection only after the forum permits its requests.
+Local collection uses `FORUM_COLLECTOR_MODE=local` and `FORUM_PUBLISH_PUBLIC=true`. It verifies category visibility and writes public-only snapshots to the private S3 bucket while collecting. The local app refreshes automatically. Keep the local server running; there is currently no hosted snapshot API for Pages. Do not redeploy cloud collection unless the forum permits its requests.
+
+已改为本地采集，保留私有 S3 存档。首次回填从已保存位置逐步推进，本地页面自动刷新；需要保持电脑和本地服务运行。Pages 的原实时 API 已删除。

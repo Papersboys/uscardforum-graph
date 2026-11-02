@@ -1,3 +1,4 @@
+import {diagnoseAccess} from './access-diagnostic';
 import {S3Client,GetObjectCommand,PutObjectCommand} from '@aws-sdk/client-s3';
 import {SecretsManagerClient,GetSecretValueCommand} from '@aws-sdk/client-secrets-manager';
 import {randomUUID} from 'node:crypto';
@@ -11,7 +12,8 @@ const s3=new S3Client({}),secrets=new SecretsManagerClient({});
 const bucket=process.env.FORUM_S3_BUCKET!,prefix=process.env.FORUM_S3_PREFIX??'archive/';
 async function get(key:string){try{return await s3.send(new GetObjectCommand({Bucket:bucket,Key:key}));}catch(e){if((e as Error).name==='NoSuchKey')return null;throw e;}}
 async function put(key:string,value:unknown,condition?:{IfMatch?:string;IfNoneMatch?:string}){return s3.send(new PutObjectCommand({Bucket:bucket,Key:key,Body:JSON.stringify(value),ContentType:'application/json',...condition}));}
-export async function handler(event:{resume?:boolean}={}){
+export async function handler(event:{resume?:boolean;diagnose?:boolean}={}){
+ if(event.diagnose){const secret=await secrets.send(new GetSecretValueCommand({SecretId:process.env.FORUM_SECRET_ARN!}));return diagnoseAccess(JSON.parse(secret.SecretString!).key);}
  const previous=await get('cloud/lease.json');const lease=previous?JSON.parse(await previous.Body!.transformToString()):null;
  if(lease?.expiresAt>Date.now())return {skipped:'collector_already_running'};
  let leaseTag:string|undefined;

@@ -12,11 +12,13 @@ export default function Graph({data,edges,depths,selected,layout,zh,onSelect,onE
  const instance=RGHooks.useGraphInstance();const current=useRef({edges,onEdge,onSelect,selected,path,showWeights,zh});current.current={edges,onEdge,onSelect,selected,path,showWeights,zh};
  const highlight=useCallback((id:string)=>{
   const activePath=current.current.path;
+  const maxWeight=Math.max(0,...current.current.edges.map(edge=>edge.weight));
   instance.updateOptions({checkedNodeId:id});
   for(const line of instance.getLines()){
    const pathEdge=pathIncludesEdge(activePath,line);
    const connected=activePath?pathEdge:line.from===id||line.to===id;
-   instance.updateLine(line.id,{opacity:connected?1:.22,color:pathEdge?'#d79b45':line.dashType?(connected?'#9a79b9':'#b9a4cd'):(connected?'#6c8bb5':'#a6b8cc'),text:current.current.showWeights?new Intl.NumberFormat(current.current.zh?'zh-CN':'en-US').format(line.data?.weight??0):'',lineWidth:pathEdge?3:1+Math.min((line.data?.weight??1)/5,2)});
+   const strongest=maxWeight>0&&line.data?.weight===maxWeight;
+   instance.updateLine(line.id,{opacity:connected||strongest?1:.22,color:pathEdge?'#d79b45':strongest?'#159b83':line.dashType?(connected?'#9a79b9':'#b9a4cd'):(connected?'#6c8bb5':'#a6b8cc'),text:current.current.showWeights||strongest?new Intl.NumberFormat(current.current.zh?'zh-CN':'en-US').format(line.data?.weight??0):'',lineWidth:pathEdge?5:strongest?4:1+Math.min((line.data?.weight??1)/5,2)});
   }
   const pathIds=new Set(activePath?.nodes??[]);
   for(const node of instance.getNodes())instance.updateNode(node.id,{data:{...node.data,inPath:pathIds.has(node.id),layerText:node.data?.depth===undefined?'':node.data.depth===0?(current.current.zh?'中心':'Center'):(current.current.zh?`第 ${node.data.depth} 层`:`Layer ${node.data.depth}`)}});
