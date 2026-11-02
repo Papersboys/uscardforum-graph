@@ -7,7 +7,7 @@
     "dev": "concurrently -k \"tsx watch server/index.ts\" \"vite --host 0.0.0.0\"",
     "build": "tsc --noEmit && vite build",
     "start": "tsx server/index.ts",
-    "test": "node --import tsx --test server/graph.test.ts server/request-pacing.test.ts server/sync.test.ts server/storage.test.ts server/user-auth.test.ts server/daily-job.test.ts src/data.test.ts src/member-sorting.test.ts src/analysis.test.ts src/neighborhood.test.ts src/topics.test.ts src/statistics.test.ts src/user-details.test.ts src/i18n.test.tsx src/topic-links.test.tsx lambda/publication.test.ts",
+    "test": "node --import tsx --test server/graph.test.ts server/request-pacing.test.ts server/sync.test.ts server/storage.test.ts server/user-auth.test.ts server/daily-job.test.ts src/data.test.ts src/graph-selection.test.ts src/member-sorting.test.ts src/analysis.test.ts src/neighborhood.test.ts src/topics.test.ts src/statistics.test.ts src/user-details.test.ts src/i18n.test.tsx src/topic-links.test.tsx lambda/publication.test.ts",
     "forum:connect": "tsx server/connect-forum.ts",
     "build:lambda": "node scripts/build-lambda.mjs"
   },

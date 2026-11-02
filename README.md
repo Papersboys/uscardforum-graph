@@ -293,3 +293,5 @@ Forum responses can limit the number of reacting users returned. Only explicitly
 点赞与点踩的箭头从操作人指向帖子作者；只有明确返回用户名的记录才计入关系。历史帖子逐步补齐，进度保存到 S3。部分列表受论坛限制，页面会提示不完整；不会根据总数猜测操作人。
 
 Request jitter is sampled once per request and added to the minimum interval. Retries add 0–1 second of jitter after the longer of exponential backoff and `Retry-After`; jitter never shortens the server’s required wait. Requests remain sequential.
+
+The graph canvas displays at most the 100 highest-weight directed relationships within its current filters and neighborhood, with stable ordering for ties. Only their endpoints are drawn (plus a selected neighborhood center). A highlighted path scopes the graph to that path before ranking. Member lists, analysis, relationship tables, S3 archives, and exports retain all collected relationships. 图谱按当前筛选与邻域显示互动次数最高的 100 条关系；用户列表、分析、明细和导出不受此显示限制。
