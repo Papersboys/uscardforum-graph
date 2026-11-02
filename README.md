@@ -230,6 +230,8 @@ After approval, save the encrypted response payload to a local file and run `npm
 
 Use **Graph scope / 图谱范围** to show the full loaded sample, one, two, or three interaction layers around the selected user, or all reachable layers. The selected user is layer zero. Layers are shortest interaction-step distances after applying the reply/mention and minimum-weight filters; weights do not shorten the distance. Choose either direction, outgoing arrows, or incoming arrows for discovery. All original edges among visible users retain their actual direction and type.
 
+Selecting a user in the graph automatically focuses on that user and their direct neighbors in either interaction direction (one layer). Choose Full sample to restore the whole graph. 点击用户后，默认只展示本人和一级直接关联用户，可切回完整样本。
+
 The layered ring layout places each distance level on a separate ring with a badge and count. Other graph layouts remain available. Changing the selected user changes the center. Disconnected users are excluded from a focused neighborhood, while an isolated center remains visible even when hiding isolated users. Layer controls affect the graph view, not the full-sample member directory, user pages, or exports. Analysis retains its own shared-filter semantics. Layering expands the loaded archive preview only; it does not fetch additional forum data on demand.
 
 ## GitHub Pages deployment

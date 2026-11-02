@@ -77,7 +77,7 @@ function App(){
  const totalInteractions=summaryEdges.reduce((n,e)=>n+e.weight,0);
  const hasFilters=kind!=='all'||minimum!==1||focus;
  function resetFilters(){setPath(null);setKind('all');setMinimum(1);setFocus(false);if(layout==='layers')setLayout('fixed');setDepth(1);setWalkDirection('both');setSelectedEdge(null);}
- function select(id:string){setSelected(id);setSelectedEdge(null);}
+ function select(id:string){setSelected(id);setSelectedEdge(null);setPath(null);setFocus(true);setDepth(1);setWalkDirection('both');setLayout('layers');}
  function openUser(id:string){select(id);setView('user');const hash=`#user/${encodeURIComponent(id)}`;if(window.location.hash!==hash)window.location.hash=hash;}
  function replace(next:Dataset){setData(next);setSelected(next.users[0]?.id??'');resetFilters();setQuery('');setTopicUser('');setView('graph');}
  function refreshCollected(next:Dataset){setData(next);setSelected(current=>next.users.some(u=>u.id===current)||userIdFromHash(window.location.hash)?current:next.users[0]?.id??'');setSelectedEdge(current=>current?next.edges.find(edge=>edgeKey(edge)===edgeKey(current))??null:null);}
