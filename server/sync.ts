@@ -5,7 +5,7 @@ import {buildGraph,type Post} from './graph.ts';
 type TopicRef={id:number;title:string};
 type StoredTopic=TopicRef&{public?:boolean;posts:Post[];stream:number[];complete:boolean};
 type Checkpoint={page:number;pending:TopicRef[];visited:number[];finished:boolean;requests:number;updatedAt:string|null;initialPassComplete?:boolean;mode?:'backfill'|'batch'};
-export type SyncStatus={configured:boolean;state:'idle'|'running'|'paused'|'complete'|'error';page:number;topics:number;posts:number;users:number;requests:number;currentTopic:string|null;updatedAt:string|null;retryAt:string|null;error:string|null;mode:'backfill'|'batch';initialPassComplete:boolean};
+export type SyncStatus={requestIntervalMs?:number;configured:boolean;state:'idle'|'running'|'paused'|'complete'|'error';page:number;topics:number;posts:number;users:number;requests:number;currentTopic:string|null;updatedAt:string|null;retryAt:string|null;error:string|null;mode:'backfill'|'batch';initialPassComplete:boolean};
 const fresh=():Checkpoint=>({page:0,pending:[],visited:[],finished:false,requests:0,updatedAt:null});
 export class ForumSync {
  private checkpoint=fresh();
@@ -31,7 +31,7 @@ export class ForumSync {
  }
  private async atomic(file:string,value:unknown){await this.archive.write(file,value);}
  private async save(){await this.atomic('checkpoint.json',this.checkpoint);}
- async status():Promise<SyncStatus>{await this.ready;return {configured:this.options.authorized,state:this.state,page:this.checkpoint.page,...this.counts,requests:this.checkpoint.requests,currentTopic:this.currentTopic,updatedAt:this.checkpoint.updatedAt,retryAt:this.retryAt,error:this.error,mode:this.checkpoint.mode??'batch',initialPassComplete:this.checkpoint.initialPassComplete??false};}
+ async status():Promise<SyncStatus>{await this.ready;return {requestIntervalMs:this.options.interval??3000,configured:this.options.authorized,state:this.state,page:this.checkpoint.page,...this.counts,requests:this.checkpoint.requests,currentTopic:this.currentTopic,updatedAt:this.checkpoint.updatedAt,retryAt:this.retryAt,error:this.error,mode:this.checkpoint.mode??'batch',initialPassComplete:this.checkpoint.initialPassComplete??false};}
  async start(options:{maxRequests?:number;mode?:'backfill'|'batch';bounded?:boolean;deadline?:number}={}){await this.ready;if(!this.options.authorized)throw new Error('authorization_required');if(this.running)return this.status();if(this.checkpoint.finished)this.checkpoint={...fresh(),initialPassComplete:this.checkpoint.initialPassComplete};this.checkpoint.mode=options.mode??'batch';this.requestLimit=options.mode==='backfill'&&!options.bounded?Infinity:options.maxRequests??Infinity;this.deadline=options.deadline??Infinity;this.runRequests=0;this.state='running';this.error=null;this.controller=new AbortController();this.running=this.run().catch(async(e)=>{if(this.controller?.signal.aborted||e instanceof SyncError&&e.code==='budget_reached'){this.state='paused';}else{this.state='error';this.error=e instanceof SyncError?e.code:'network_or_storage_error';}await this.save();}).finally(async()=>{this.running=undefined;this.currentTopic=null;this.retryAt=null;if(this.state==='running'&&this.checkpoint.finished)this.state='complete';await this.options.onProgress?.();});void this.running.catch(()=>{this.state='error';this.error='storage_error';});return this.status();}
  async waitUntilIdle(){await this.running;}
  async pause(){await this.ready;this.controller?.abort();await this.running;return this.status();}

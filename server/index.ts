@@ -21,10 +21,12 @@ const publishLocally=!cloudManaged&&process.env.FORUM_PUBLISH_PUBLIC==='true';
 let categories:Set<number>|undefined;
 if(publishLocally&&userKey){const response=await fetch('https://www.uscardforum.com/categories.json?include_subcategories=true',{headers:{Accept:'application/json','User-Agent':'ForumAtlas/1.0 (authorized topic synchronization)','User-Api-Key':userKey},signal:AbortSignal.timeout(30000)});if(!response.ok)throw Error('Cannot verify public category visibility');categories=publicCategoryIds(await response.json());}
 const publish=publishLocally&&cloudRemote?localPublisher(cloudRemote,()=>sync,()=>daily.status()):undefined;
+const configuredInterval=Number(process.env.FORUM_REQUEST_INTERVAL_MS??1000);
+const requestInterval=Number.isFinite(configuredInterval)?Math.max(1000,configuredInterval):1000;
 const sync:ForumSync=new ForumSync(dataDirectory,{
  authorized:!cloudManaged&&(!!userKey||process.env.FORUM_SYNC_AUTHORIZED==='true'&&(!process.env.FORUM_API_KEY||!!process.env.FORUM_API_USERNAME)),userKey,
  publicCategoryIds:categories,onProgress:publish,collectReactions:true,
- key:process.env.FORUM_API_KEY,username:process.env.FORUM_API_USERNAME,interval:12000,
+ key:process.env.FORUM_API_KEY,username:process.env.FORUM_API_USERNAME,interval:requestInterval,
 },archive);
 const budget=Number(process.env.FORUM_REQUEST_BUDGET??process.env.FORUM_DAILY_REQUEST_BUDGET??50);
 const daily=new DailyJob(sync,dataDirectory,{enabled:process.env.FORUM_DAILY_ENABLED!=='false',initialBackfill:process.env.FORUM_INITIAL_BACKFILL!=='false',maxRequests:Number.isFinite(budget)?Math.max(5,Math.min(50,Math.floor(budget))):50},archive);
