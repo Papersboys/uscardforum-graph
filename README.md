@@ -4,14 +4,22 @@ A bilingual USCardForum interaction explorer built with React, TypeScript, Vite,
 
 美卡论坛用户互动图谱：自动收录话题中的用户、回复和 @提及，提供图谱浏览、用户详情、话题来源和互动分析。界面支持 English / 普通话（简体中文）及浅色 / 深色主题。
 
+## Live site / 在线预览
+
+[Open the GitHub Pages site](https://papersboys.github.io/uscardforum-graph/) · [GitHub repository](https://github.com/Papersboys/uscardforum-graph)
+
+在线地址：**https://papersboys.github.io/uscardforum-graph/**
+
+GitHub Pages hosts the frontend demo. The Node collector, account credentials, and private S3 archive run separately and are not published with the site. 本链接为前端演示；采集后端、账号凭据和私有 S3 数据均不随 Pages 发布。
+
 ## Current status / 当前状态
 
-- Automatic collection is implemented: **up to 50 requests per ten-minute batch, twelve seconds apart**, with persisted progress and no overlapping scheduled batches.
+- Routine collection supports **up to 50 requests per ten-minute batch, twelve seconds apart**. Initial backfill runs continuously at the same spacing, with persisted progress.
 - Collected data loads into the graph automatically on page open and after a new server save. There is no JSON import workflow.
-- **Real collection is waiting for configured access.** Until data exists, the app displays a clearly labeled fictional demo. Signing in to the forum in a browser does not connect that session to this server.
-- The project runs locally. Hosting and a continuously running server are needed for unattended collection.
+- The backend supports authorized read-only user API access and S3 persistence. Without configured access or collected data, it displays a labeled fictional demo. The public Pages site always uses the demo and does not connect to the private backend.
+- The frontend is published on GitHub Pages. A continuously running backend is still needed for collection; Lambda/EventBridge deployment is not yet implemented.
 
-已实现每 10 分钟一批、每批最多 50 次请求，间隔 12 秒；支持断点续传和自动更新图谱。目前访问方式尚未配置，页面仍为明确标注的演示数据。
+已实现每 10 分钟一批、每批最多 50 次请求，间隔 12 秒；支持断点续传和自动更新图谱。Pages 页面为明确标注的演示数据，实际采集由独立后端运行。
 
 ## Run
 
@@ -59,7 +67,7 @@ Edit `.env`, then restart the server. Keep credentials in this gitignored file r
 | `FORUM_DAILY_ENABLED` | `true` | Initial automatic schedule setting. The legacy name remains; the interval is **ten minutes**, not daily. The UI's saved setting takes precedence on later starts. |
 | `FORUM_REQUEST_BUDGET` | `50` | Request limit per scheduled batch, clamped to 5–50. |
 
-The old `FORUM_DAILY_REQUEST_BUDGET` variable remains a fallback when `FORUM_REQUEST_BUDGET` is absent. Request spacing is twelve seconds. API keys, login-session bridging, or other access methods are not created by this project; browser credential/session support is not implemented.
+The old `FORUM_DAILY_REQUEST_BUDGET` variable remains a fallback when `FORUM_REQUEST_BUDGET` is absent. Request spacing is twelve seconds. API keys, login-session bridging, or other access methods are not created by this project; browser cookies are not transferred to the server. The optional read-only user API authorization flow below can connect an existing forum account.
 
 ## Typical workflow / 使用流程
 
@@ -121,13 +129,13 @@ Density counts unique directed user pairs (merging reply and mention types) over
 
 ## Limitations
 
-Forum access can be blocked or rate limited by the upstream site. This project does not bypass access controls. Do not add private cookies to the source code. Respect forum rules and obtain permission before expanding to a bulk crawler. The app has no login or database and has not been deployed.
+Forum access can be blocked or rate limited by the upstream site. This project does not bypass access controls. Do not add private cookies to the source code. Respect forum rules and obtain permission before expanding to a bulk crawler. The app has no public backend deployment or database service; the public frontend runs on GitHub Pages.
 
 ## Automatic server job
 
 The Express process runs the scheduler; Codex does not need to remain open. The server itself must remain running and its `.forum-data/` directory must persist. On a sleeping or stopped computer, collection does not run. On restart, one overdue batch runs when access is configured; missed intervals do not produce catch-up bursts. Next-run time is persisted before collection to prevent an immediate repeat within the same interval after a restart. The interval is ten minutes from the previous scheduled start (displayed in your browser locale), not a fixed local clock time.
 
-`FORUM_DAILY_ENABLED=false` sets the initial schedule off; the UI switch persists subsequent choices in `.forum-data/daily-job.json`. `FORUM_REQUEST_BUDGET` defaults to 50 (clamped to 5–50). The request budget includes topic listing, post batches, and retry attempts. Very long threads continue over multiple batches. Manual batches have a separate 50-request budget. Server restarts require a working access configuration; a browser login is not automatically transferred to the server. No real forum data has been collected by this implementation.
+`FORUM_DAILY_ENABLED=false` sets the initial schedule off; the UI switch persists subsequent choices in `.forum-data/daily-job.json`. `FORUM_REQUEST_BUDGET` defaults to 50 (clamped to 5–50). The request budget includes topic listing, post batches, and retry attempts. Very long threads continue over multiple batches. Manual batches have a separate 50-request budget. Server restarts require a working access configuration; a browser login is not automatically transferred to the server. Collected forum data is kept in the private archive and is not bundled into the public frontend.
 
 Collected graph data loads automatically when opening the page and after a new server save is detected. Updates preserve the current view, filters, search, and selected user when still present. No manual import or graph-load action is required.
 
@@ -181,3 +189,51 @@ POST routes require the `X-Atlas-Request: 1` header. This is a local cross-origi
 | Archive counts exceed graph counts | Expected: the visual preview is limited to keep the browser responsive. |
 
 This is an independent community visualization project, not an official USCardForum product.
+
+## S3 archive storage
+
+Set `FORUM_S3_BUCKET`, `AWS_REGION`, and optionally `FORUM_S3_PREFIX` (default `archive/`). The server uses the AWS SDK's standard credential chain, including a local `AWS_PROFILE` or a hosting role; credentials never enter the browser. This follows the [AWS SDK credential configuration](https://docs.aws.amazon.com/sdk-for-javascript/v3/developer-guide/setting-credentials-node.html).
+
+The project uses a private S3 bucket with public access blocked and versioning enabled. Set the bucket name and region in the server environment. S3 holds `archive/checkpoint.json`, `archive/daily-job.json`, and `archive/topics/<id>.json`. Objects inherit bucket encryption. See [S3 server-side encryption](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingServerSideEncryption.html).
+
+`.forum-data/` remains a local cache. At startup, the server restores S3 objects and migrates local-only archive files to S3. During the process lifetime, cached reads avoid repeated S3 downloads. Writes reach S3 before updating the cache; S3 failures are reported rather than silently treating local changes as saved remotely. Run a single collector process per archive prefix; distributed locking and multiple writers are not supported. Required role permissions are `s3:ListBucket` on the bucket and `s3:GetObject` / `s3:PutObject` on the configured prefix. S3 stores data; it does not host this Express backend or run its scheduler.
+
+## Relationship content
+
+Relationship details include a plain-text source-post excerpt (up to 360 characters), its author, and the original post link. Replies also include an excerpt of the parent post when available. Excerpts come directly from collected posts; they are not generated summaries or inferred relationship labels. Upstream HTML is never injected into the UI. Missing content is marked explicitly, and the demo does not invent source conversations. JSON graph exports include these excerpts; the full collected post data remains in the archive.
+
+## Sorting and dense neighborhoods / 用户排序与关系密度
+
+The graph member list, member directory, and analysis user ranking support most/fewest connections, most/fewest weighted interactions, densest/sparsest neighbor networks, most/fewest sampled posts, and username order. The relationship table also supports most/fewest interactions. Member directory and graph member rankings use the full loaded sample; analysis rankings use the current interaction-type and minimum-weight filters.
+
+**Neighbor density** is the number of connections among a user's unique neighbors divided by the number of possible neighbor pairs: `links / (k × (k − 1) / 2)`. Arrow direction and reply/mention types are merged. Repeated interactions do not increase this density. A triangle has 100% density; a star's central user's neighbors have 0% when they do not interact with one another. Fewer than two neighbors is unavailable (`—`) and always sorts last, rather than being treated as 0%. Density ties favor more connections, then more interactions, then username. This measures the observed sample, not a real-world friendship group.
+
+## Potential cloud scheduler
+
+The current worker runs in the Express process. It can be moved to an EventBridge Scheduler target backed by Lambda, with S3 retaining checkpoints and topic data. [EventBridge Scheduler supports rate-based schedules](https://docs.aws.amazon.com/scheduler/latest/UserGuide/schedule-types.html). A standard [Lambda function has a maximum 900-second timeout](https://docs.aws.amazon.com/lambda/latest/dg/configuration-timeout.html), so a batch of 50 requests twelve seconds apart needs careful duration budgeting, timeout recovery, and a lock shared with any other collector. No Lambda function or EventBridge schedule has been deployed by this project yet.
+
+## Initial backfill / 首次全量回填
+
+`FORUM_INITIAL_BACKFILL=true` (default) selects a continuous first pass when the scheduler is enabled and working access is configured. It has no 50-request batch cap and still spaces requests twelve seconds apart. Each topic/post batch and discovery checkpoint is saved to the configured storage, including S3. The first-pass completion flag persists in the checkpoint. A restarted server resumes this initial pass when its schedule is enabled; using Pause disables the schedule until you resume it. After the initial pass finishes, subsequent scheduled passes use the normal fifty-request budget per ten minutes.
+
+The **Start / resume initial backfill / 开始／继续首次回填** action (`POST /api/sync/backfill`, with the same custom header) can explicitly run a continuous pass. It stops on access, storage, pagination, or incomplete-topic errors and retains progress. The graph preview continues to update automatically while the larger archive grows.
+
+“Full” refers to the accessible topic listing and readable post streams returned by the forum. It cannot guarantee unlisted, deleted, private, or API-pagination-limited data. It discovers posting users, not every registered account. There is no known total-duration estimate. Long continuous backfill requires an always-on Node worker or a resumable cloud workflow; it cannot be assumed to fit in one Lambda invocation. This mode does not grant access or bypass an HTTP 403.
+
+## Connect a regular forum account
+
+The forum supports Discourse's [user API authorization flow](https://meta.discourse.org/t/user-api-keys-specification/48536), which can issue user-scoped access without an administrator API key when enabled by the site. Run `npm run forum:connect` to generate a local key pair and an authorization URL. Open it in your signed-in forum browser and review the **read** scope before authorizing. Discourse describes this broad permission as reading all content available to your account; review it carefully rather than treating it as public-only permission.
+
+After approval, save the encrypted response payload to a local file and run `npm run forum:connect -- /absolute/path/to/payload.txt`. This verifies the nonce, decrypts the response locally, and saves the resulting key in `.forum-data/user-auth.json` with owner-only file permissions. Restart the server to load the `User-Api-Key` credential. The file contains credentials/private key material and is not uploaded by the S3 archive adapter or committed to Git. Keep it out of backups shared with others. Revoke access from the forum account's Apps settings when no longer needed. A valid user key configures access for the requested collector; it does not bypass rate limits or guarantee that upstream network controls permit server requests. The collector filters out private-message archetypes, but regular topics can include restricted categories visible to your account.
+
+## Multi-layer graph / 多层图谱
+
+Use **Graph scope / 图谱范围** to show the full loaded sample, one, two, or three interaction layers around the selected user, or all reachable layers. The selected user is layer zero. Layers are shortest interaction-step distances after applying the reply/mention and minimum-weight filters; weights do not shorten the distance. Choose either direction, outgoing arrows, or incoming arrows for discovery. All original edges among visible users retain their actual direction and type.
+
+The layered ring layout places each distance level on a separate ring with a badge and count. Other graph layouts remain available. Changing the selected user changes the center. Disconnected users are excluded from a focused neighborhood, while an isolated center remains visible even when hiding isolated users. Layer controls affect the graph view, not the full-sample member directory, user pages, or exports. Analysis retains its own shared-filter semantics. Layering expands the loaded archive preview only; it does not fetch additional forum data on demand.
+
+## GitHub Pages deployment
+
+`.github/workflows/pages.yml` tests, builds, and publishes `dist/` on pushes to `main` or manual workflow dispatch. The build uses `VITE_BASE_PATH=/uscardforum-graph/` and `VITE_STATIC_PREVIEW=true`. Static preview mode disables local API polling and collection controls and clearly labels the demo. No AWS credentials or forum keys are configured in this workflow. The dependency lockfile uses the public npm registry so GitHub-hosted runners do not need an internal registry.
+
+Local development keeps the normal `/` base path and API connection. To reproduce the Pages build locally, run `VITE_BASE_PATH=/uscardforum-graph/ VITE_STATIC_PREVIEW=true npm run build`.

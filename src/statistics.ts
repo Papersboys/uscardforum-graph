@@ -1,3 +1,4 @@
+import {neighborhoodDensities} from './member-sorting';
 import type {Dataset,Edge} from '../server/graph';
 export function networkStatistics(data:Dataset,edges:Edge[]){
  const users=new Map(data.users.map(u=>[u.id,{...u,incoming:0,outgoing:0,neighbors:new Set<string>()}]));
@@ -9,7 +10,8 @@ export function networkStatistics(data:Dataset,edges:Edge[]){
  const components:string[][]=[];const seen=new Set<string>();
  for(const id of users.keys()){if(seen.has(id))continue;const component=[id];seen.add(id);for(let i=0;i<component.length;i++)for(const neighbor of users.get(component[i])!.neighbors)if(!seen.has(neighbor)){seen.add(neighbor);component.push(neighbor);}components.push(component);}
  components.sort((a,b)=>b.length-a.length);
- const ranked=[...users.values()].map(u=>({...u,connections:u.neighbors.size,interactions:u.incoming+u.outgoing})).sort((a,b)=>b.interactions-a.interactions||b.connections-a.connections||a.username.localeCompare(b.username));
+ const densities=neighborhoodDensities(data,edges);
+ const ranked=[...users.values()].map(u=>({...u,density:densities.get(u.id)??null,connections:u.neighbors.size,interactions:u.incoming+u.outgoing})).sort((a,b)=>b.interactions-a.interactions||b.connections-a.connections||a.username.localeCompare(b.username));
  const active=ranked.filter(u=>u.connections>0).length;
  return {ranked,active,isolated:users.size-active,total:mix.reply+mix.mention,mix,distribution,components,directedPairs:directedPairs.size,mutualPairs:[...pairs.values()].filter(Boolean).length,pairs:pairs.size,density:users.size<2?0:directedPairs.size/(users.size*(users.size-1)),averageConnections:users.size?ranked.reduce((n,u)=>n+u.connections,0)/users.size:0};
 }

@@ -7,9 +7,11 @@
     "dev": "concurrently -k \"tsx watch server/index.ts\" \"vite --host 0.0.0.0\"",
     "build": "tsc --noEmit && vite build",
     "start": "tsx server/index.ts",
-    "test": "node --import tsx --test server/graph.test.ts server/sync.test.ts server/daily-job.test.ts src/data.test.ts src/analysis.test.ts src/topics.test.ts src/statistics.test.ts src/user-details.test.ts src/i18n.test.tsx src/topic-links.test.tsx"
+    "test": "node --import tsx --test server/graph.test.ts server/sync.test.ts server/storage.test.ts server/user-auth.test.ts server/daily-job.test.ts src/data.test.ts src/member-sorting.test.ts src/analysis.test.ts src/neighborhood.test.ts src/topics.test.ts src/statistics.test.ts src/user-details.test.ts src/i18n.test.tsx src/topic-links.test.tsx",
+    "forum:connect": "tsx server/connect-forum.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1161.0",
     "@relation-graph/react": "^3.0.0",
     "express": "^5.1.0",
     "react": "^19.0.0",
