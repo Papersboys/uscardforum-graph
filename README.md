@@ -10,16 +10,16 @@ A bilingual USCardForum interaction explorer built with React, TypeScript, Vite,
 
 在线地址：**https://papersboys.github.io/uscardforum-graph/**
 
-GitHub Pages hosts the frontend demo. The Node collector, account credentials, and private S3 archive run separately and are not published with the site. 本链接为前端演示；采集后端、账号凭据和私有 S3 数据均不随 Pages 发布。
+GitHub Pages hosts the frontend and polls a read-only Lambda API for progressively collected public-topic snapshots. Raw archives and credentials remain private. 在线图谱会随云端采集进度自动更新；原始归档和凭据保持私有。
 
 ## Current status / 当前状态
 
 - Routine collection supports **up to 50 requests per ten-minute batch, twelve seconds apart**. Initial backfill runs continuously at the same spacing, with persisted progress.
 - Collected data loads into the graph automatically on page open and after a new server save. There is no JSON import workflow.
-- The backend supports authorized read-only user API access and S3 persistence. Without configured access or collected data, it displays a labeled fictional demo. The public Pages site always uses the demo and does not connect to the private backend.
-- The frontend is published on GitHub Pages. A continuously running backend is still needed for collection; Lambda/EventBridge deployment is not yet implemented.
+- The backend supports authorized read-only user API access and S3 persistence. Without configured access or collected data, it displays a labeled fictional demo. The Pages site uses the public snapshot API when configured; demo-only mode remains available when no API URL is set.
+- The frontend is published on GitHub Pages. Collection runs independently in Lambda, triggered by EventBridge Scheduler; your computer does not need to stay on.
 
-已实现每 10 分钟一批、每批最多 50 次请求，间隔 12 秒；支持断点续传和自动更新图谱。Pages 页面为明确标注的演示数据，实际采集由独立后端运行。
+已实现每 10 分钟一批、每批最多 50 次请求，间隔 12 秒；支持断点续传和自动更新图谱。Pages 页面从只读快照 API 自动加载已采集的公开话题，采集任务由云端 Lambda 独立运行。
 
 ## Run
 
@@ -208,9 +208,9 @@ The graph member list, member directory, and analysis user ranking support most/
 
 **Neighbor density** is the number of connections among a user's unique neighbors divided by the number of possible neighbor pairs: `links / (k × (k − 1) / 2)`. Arrow direction and reply/mention types are merged. Repeated interactions do not increase this density. A triangle has 100% density; a star's central user's neighbors have 0% when they do not interact with one another. Fewer than two neighbors is unavailable (`—`) and always sorts last, rather than being treated as 0%. Density ties favor more connections, then more interactions, then username. This measures the observed sample, not a real-world friendship group.
 
-## Potential cloud scheduler
+## Cloud scheduler
 
-The current worker runs in the Express process. It can be moved to an EventBridge Scheduler target backed by Lambda, with S3 retaining checkpoints and topic data. [EventBridge Scheduler supports rate-based schedules](https://docs.aws.amazon.com/scheduler/latest/UserGuide/schedule-types.html). A standard [Lambda function has a maximum 900-second timeout](https://docs.aws.amazon.com/lambda/latest/dg/configuration-timeout.html), so a batch of 50 requests twelve seconds apart needs careful duration budgeting, timeout recovery, and a lock shared with any other collector. No Lambda function or EventBridge schedule has been deployed by this project yet.
+The cloud worker runs in Lambda and uses EventBridge Scheduler, with S3 retaining checkpoints and topic data. The local Express timer is disabled with `FORUM_COLLECTOR_MODE=cloud`. [EventBridge Scheduler supports rate-based schedules](https://docs.aws.amazon.com/scheduler/latest/UserGuide/schedule-types.html). A standard [Lambda function has a maximum 900-second timeout](https://docs.aws.amazon.com/lambda/latest/dg/configuration-timeout.html), so a batch of 50 requests twelve seconds apart needs careful duration budgeting, timeout recovery, and a lock shared with any other collector. The deployment script provisions `uscardforum-graph-backfill`, `uscardforum-graph-api`, and the `uscardforum-backfill` schedule.
 
 ## Initial backfill / 首次全量回填
 
@@ -234,6 +234,38 @@ The layered ring layout places each distance level on a separate ring with a bad
 
 ## GitHub Pages deployment
 
-`.github/workflows/pages.yml` tests, builds, and publishes `dist/` on pushes to `main` or manual workflow dispatch. The build uses `VITE_BASE_PATH=/uscardforum-graph/` and `VITE_STATIC_PREVIEW=true`. Static preview mode disables local API polling and collection controls and clearly labels the demo. No AWS credentials or forum keys are configured in this workflow. The dependency lockfile uses the public npm registry so GitHub-hosted runners do not need an internal registry.
+`.github/workflows/pages.yml` tests, builds, and publishes `dist/` on pushes to `main` or manual workflow dispatch. The build uses `VITE_BASE_PATH=/uscardforum-graph/`; `VITE_STATIC_PREVIEW` is selected from whether `FORUM_API_BASE_URL` is configured. If the repository variable `FORUM_API_BASE_URL` is set, the build connects to that read-only API; otherwise static preview mode disables API polling and clearly labels the demo. No AWS credentials or forum keys are configured in this workflow. The dependency lockfile uses the public npm registry so GitHub-hosted runners do not need an internal registry.
 
 Local development keeps the normal `/` base path and API connection. To reproduce the Pages build locally, run `VITE_BASE_PATH=/uscardforum-graph/ VITE_STATIC_PREVIEW=true npm run build`.
+
+## Progressive Lambda backfill / 云端逐步回填
+
+The deployed worker **`uscardforum-graph-backfill`** runs in `us-west-2`. EventBridge Scheduler **`uscardforum-backfill`** invokes it every ten minutes. Each invocation uses one category-visibility request and at most 49 collection requests, spaced twelve seconds apart. It stops initiating requests before a soft execution deadline so its 900-second Lambda timeout has room for saving state. Long backfills span many invocations and resume the same S3 checkpoint. The first pass has no overall request-count cap.
+
+The worker writes each topic/post batch to `archive/topics/`, then updates public graph/status snapshots while the invocation is still running (normally no more often than every ten seconds). **It does not wait for the whole backfill to finish.** Pages polls status every ten seconds and reloads the graph after saved progress changes. A prefix-scoped S3 conditional-write lease and reserved concurrency of one prevent overlapping cloud collectors. Do not run the local writer against the same archive; use `FORUM_COLLECTOR_MODE=cloud` for local read-through access to cloud snapshots.
+
+The S3 bucket stays private. Only topics explicitly verified as public from category visibility metadata are eligible for `public/graph.json`. Unknown categories, restricted categories, private-message archetypes, and whisper post types are excluded from that snapshot. Existing archive files without verified public metadata are also excluded until refreshed. A separate read-only Lambda API role can read only `public/*`; it cannot access raw archives or Secrets Manager. Its public Function URL supports GET `/api/sync` and `/api/graph`, with CORS for the Pages origin. Publication uses the same bounded graph preview limits as the app.
+
+The approved read-only forum key is stored in **Secrets Manager** at `uscardforum-graph/forum-readonly`; only the worker role can retrieve it. The RSA private key stays local. The deployment workflow has no forum key or AWS credentials.
+
+Deployment is performed with `python3 scripts/deploy-cloud.py`, using the configured personal AWS profile and a local approved user key. It provisions the worker/API roles, functions, schedule, and API URL and records nonsecret outputs in `.forum-data/cloud-deployment.json`. The script is specific to this project's account/bucket; adapt and review those constants for another account. Use `npm run build:lambda` to build the bundled Lambda code.
+
+To invoke a batch manually (using your configured AWS credentials):
+
+```sh
+aws lambda invoke \
+  --function-name uscardforum-graph-backfill \
+  --region us-west-2 \
+  --invocation-type Event \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{"resume":true}' \
+  /tmp/forum-invocation.json
+```
+
+The manual event resumes a held error after the access/storage problem has been resolved. A live lease skips duplicate work. Scheduled errors hold further collection through `cloud/control.json` rather than repeatedly hitting a denied endpoint. Monitor `/aws/lambda/uscardforum-graph-backfill` in CloudWatch Logs; credential values are never logged.
+
+### Current cloud access limitation
+
+The worker has been deployed and invoked, but USCardForum currently returns HTTP 403 for requests originating from AWS. Cloud collection is held in `cloud/control.json` to avoid repeated denied requests. The same authorized account works locally. Existing verified-public archive data is published through the read-only API and remains browsable. A 202 response from `lambda invoke` means the event was accepted, not that collection succeeded; check status and CloudWatch logs for the result.
+
+An explicitly approved temporary local fallback can use `FORUM_COLLECTOR_MODE=local` and `FORUM_PUBLISH_PUBLIC=true`. It verifies category visibility and publishes public-only snapshots throughout collection, while the Lambda collector remains held. This fallback requires the local server to stay running. Resume direct Lambda collection only after the forum permits its requests.

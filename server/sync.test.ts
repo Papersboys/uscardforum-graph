@@ -29,3 +29,13 @@ test('initial backfill exceeds the routine request cap and persists its completi
  let calls=0;const request:typeof fetch=async url=>{calls++;const parsed=new URL(String(url));if(parsed.pathname==='/latest.json'){const page=Number(parsed.searchParams.get('page'));return json({topic_list:{topics:page<3?[{id:page+1,title:`Topic ${page+1}`}]:[]}});}return json({post_stream:{stream:[Number(parsed.pathname.split('/')[2].split('.')[0])],posts:[{id:Number(parsed.pathname.split('/')[2].split('.')[0]),username:'Alice',post_number:1}]}});};
  const sync=new ForumSync(dir,{authorized:true,fetch:request,interval:0});await sync.start({mode:'backfill',maxRequests:2});await sync.waitUntilIdle();assert.equal((await sync.status()).state,'complete');assert.equal(calls,7);assert.equal((await sync.status()).initialPassComplete,true);const restored=new ForumSync(dir,{authorized:true,fetch:request,interval:0});assert.equal((await restored.status()).initialPassComplete,true);await restored.start({maxRequests:2});await restored.waitUntilIdle();assert.equal((await restored.status()).state,'paused');assert.equal((await restored.status()).initialPassComplete,true);
 }));
+test('cloud deadline stops before another request and public graph excludes unverified archive content',()=>fixture(async dir=>{
+ let calls=0;const sync=new ForumSync(dir,{authorized:true,interval:0,fetch:async()=>{calls++;return json({topic_list:{topics:[]}});}});await sync.start({mode:'backfill',bounded:true,maxRequests:49,deadline:Date.now()+1000});await sync.waitUntilIdle();assert.equal(calls,0);assert.equal((await sync.status()).state,'paused');
+}));
+test('public snapshots omit restricted/unverified topics and whisper posts',()=>fixture(async dir=>{
+ const {ArchiveStore}=await import('./storage.ts');const archive=new ArchiveStore(dir);
+ await archive.write('topics/1.json',{id:1,title:'Public',public:true,complete:true,stream:[1,2],posts:[{id:1,username:'PublicUser',post_number:1,post_type:1},{id:2,username:'ModeratorOnly',post_number:2,post_type:4}]});
+ await archive.write('topics/2.json',{id:2,title:'Restricted',public:false,complete:true,stream:[3],posts:[{id:3,username:'PrivateUser',post_number:1}]});
+ await archive.write('topics/3.json',{id:3,title:'Unverified',complete:true,stream:[4],posts:[{id:4,username:'UnknownUser',post_number:1}]});
+ const sync=new ForumSync(dir,{authorized:true},archive);const graph=await sync.graph(true);assert.deepEqual(graph.users.map(u=>u.username),['PublicUser']);assert.equal(graph.topics,1);assert.equal((await sync.graph()).topics,3);
+}));

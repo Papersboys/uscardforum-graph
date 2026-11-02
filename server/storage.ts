@@ -5,7 +5,7 @@ export type RemoteArchive={get:(key:string)=>Promise<string|null>;put:(key:strin
 export function s3Remote(bucket:string,region?:string):RemoteArchive{
  const client=new S3Client({region});
  return {
-  async get(key){try{const result=await client.send(new GetObjectCommand({Bucket:bucket,Key:key}));if(!result.Body)throw Error('Empty S3 body');return await result.Body.transformToString();}catch(e){if((e as {name?:string}).name==='NoSuchKey')return null;throw e;}},
+  async get(key){const listing=await client.send(new ListObjectsV2Command({Bucket:bucket,Prefix:key,MaxKeys:1}));if(!listing.Contents?.some(object=>object.Key===key))return null;try{const result=await client.send(new GetObjectCommand({Bucket:bucket,Key:key}));if(!result.Body)throw Error('Empty S3 body');return await result.Body.transformToString();}catch(e){if((e as {name?:string}).name==='NoSuchKey')return null;throw e;}},
   async put(key,body){await client.send(new PutObjectCommand({Bucket:bucket,Key:key,Body:body,ContentType:'application/json'}));},
   async list(prefix){const keys:string[]=[];let token:string|undefined;do{const result=await client.send(new ListObjectsV2Command({Bucket:bucket,Prefix:prefix,ContinuationToken:token}));for(const object of result.Contents??[])if(object.Key)keys.push(object.Key);token=result.IsTruncated?result.NextContinuationToken:undefined;if(result.IsTruncated&&!token)throw Error('Incomplete S3 listing');}while(token);return keys;},
  };

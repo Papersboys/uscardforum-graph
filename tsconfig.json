@@ -1,1 +1,26 @@
-{"compilerOptions":{"target":"ES2022","lib":["ES2022","DOM"],"module":"ESNext","moduleResolution":"bundler","jsx":"react-jsx","strict":true,"esModuleInterop":true,"skipLibCheck":true,"allowImportingTsExtensions":true,"noEmit":true,"types":["node"]},"include":["src","server","vite.config.ts"]}
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src",
+    "server",
+    "vite.config.ts",
+    "lambda"
+  ]
+}
