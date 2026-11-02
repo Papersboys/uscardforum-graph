@@ -1,16 +1,15 @@
 import {useEffect,useRef,useState} from 'react';
-import type {DailyJob} from '../server/daily-job';
 import type {SyncStatus} from '../server/sync';
 import {localeTools} from './i18n';
 import type {Dataset} from '../server/graph';
 export default function SyncPanel({zh,onLoad}:{zh:boolean;onLoad:(data:Dataset)=>void}){
- const {t,n,date}=localeTools(zh);
+ const {t,n}=localeTools(zh);
  const apiBase=(import.meta as ImportMeta&{env:Record<string,string>}).env.VITE_API_BASE_URL??'';
  const snapshotBase=(import.meta as ImportMeta&{env:Record<string,string>}).env.VITE_SNAPSHOT_BASE_URL?.replace(/\/$/,'')??'';
  const statusUrl=snapshotBase?snapshotBase+'/status.json':apiBase+'/api/sync';
  const graphUrl=snapshotBase?snapshotBase+'/graph.json':apiBase+'/api/graph';
  const staticPreview=(import.meta as ImportMeta&{env:Record<string,string>}).env.VITE_STATIC_PREVIEW==='true';
- const [status,setStatus]=useState<(SyncStatus&{daily?:Awaited<ReturnType<DailyJob['status']>>;storage?:{backend:'s3'|'local'};cloudManaged?:boolean;runner?:string})|null>(null),[error,setError]=useState(false),[busy,setBusy]=useState(false);
+ const [status,setStatus]=useState<SyncStatus|null>(null),[error,setError]=useState(false);
  const onLoadRef=useRef(onLoad);onLoadRef.current=onLoad;
  useEffect(()=>{if(staticPreview)return;let live=true,busy=false;let loadedVersion:string|null=null;const controller=new AbortController();
   const update=async()=>{if(busy)return;busy=true;try{const response=await fetch(statusUrl,{signal:controller.signal,cache:'no-store'});if(!response.ok)throw Error();const next=await response.json();if(!live)return;setStatus(next);
@@ -18,7 +17,6 @@ export default function SyncPanel({zh,onLoad}:{zh:boolean;onLoad:(data:Dataset)=
   }catch{if(live)setError(true);}finally{busy=false;}};
   const visible=()=>{if(!document.hidden)void update();};
   void update();const timer=setInterval(update,snapshotBase||apiBase?10000:3000);window.addEventListener('focus',visible);document.addEventListener('visibilitychange',visible);return()=>{live=false;controller.abort();clearInterval(timer);window.removeEventListener('focus',visible);document.removeEventListener('visibilitychange',visible);};},[staticPreview,apiBase,snapshotBase,statusUrl,graphUrl]);
- async function action(action:'start'|'backfill'|'pause'|'daily-enable'|'daily-disable'){setBusy(true);setError(false);try{const response=await fetch(`/api/sync/${action}`,{method:'POST',headers:{'X-Atlas-Request':'1'}});if(!response.ok)throw Error();const status=await fetch(apiBase+'/api/sync');if(!status.ok)throw Error();setStatus(await status.json());}catch{setError(true);}finally{setBusy(false);}}
 
  const labels={idle:t('Ready','就绪'),running:t('Syncing','同步中'),paused:t('Paused','已暂停'),complete:t('Pass complete','本轮完成'),error:t('Needs attention','需要处理')};
  const errors:Record<string,string>={category_access_http_403:t('The forum denied AWS requests (HTTP 403). Cloud collection is held; saved data remains available.','论坛拒绝 AWS 的请求（HTTP 403）。云端采集已暂停，已有数据仍可浏览。'),access_denied:t('The forum denied access. Check authorized API access before resuming.','论坛拒绝访问。请检查已获授权的 API 访问权限后再继续。'),rate_limited:t('Rate limit reached. Collection is saved; resume later.','已触发频率限制，采集进度已保存，请稍后继续。'),forum_unavailable:t('The forum is unavailable. Progress is saved.','论坛暂时不可用，进度已保存。'),pagination_stalled:t('The topic list repeated a page. Progress is saved; check API pagination before resuming.','话题列表返回了重复页面，进度已保存。请检查 API 分页后再继续。'),incomplete_topic:t('Some post IDs were unavailable. The partial topic is saved; check access before resuming.','部分帖子无法读取，已保存话题的现有内容。请检查权限后继续。')};
@@ -28,17 +26,6 @@ export default function SyncPanel({zh,onLoad}:{zh:boolean;onLoad:(data:Dataset)=
   <div className="sync-counts"><span><strong>{n(status?.topics??0)}</strong>{t('collected topics','已收录话题')}</span><span><strong>{n(status?.posts??0)}</strong>{t('posts','帖子')}</span><span><strong>{n(status?.users??0)}</strong>{t('discovered users','已发现用户')}</span><span><strong>{n(status?.page??0)}</strong>{t('topic pages visited','已读取话题页')}</span></div>
   {status?.error&&<p role="alert" className="sync-error">{errors[status.error]??t('Synchronization stopped. Check server access and storage; collected data is saved.','同步已停止。请检查服务端访问权限与存储；已采集数据已保存。')}</p>}
   {error&&<p role="alert" className="sync-error">{t('Could not contact the sync service. Your current graph is unchanged.','无法连接同步服务，当前关系图已保留。')}</p>}
-  <details className="sync-details"><summary>{t('Collection details & schedule','收录详情与定时任务')}</summary><div className="sync-details-body">
-  {status?.daily&&<div className="daily-schedule"><div><strong>{t('Automatic collection','自动增量收录')}</strong><p>{!status.daily.enabled?t('Schedule paused.','自动计划已暂停。'):status.daily.waitingForAccess?t('Schedule enabled · waiting for configured access.','自动计划已开启 · 等待配置访问方式。'):status.daily.blockedReason?t('Schedule stopped after an error. Check access, then resume.','计划因错误停止，请检查访问方式后恢复。'):status.daily.running?t('Current batch is running.','当前批次正在运行。'):t('Next batch: ','下次执行：')+date(status.daily.nextRunAt)}</p><small>{status.mode==='backfill'&&!status.initialPassComplete?t(`Initial backfill · ${n((status.requestIntervalMs??12000)/1000)}s between requests · resumes saved progress.`,`首次回填 · 请求间隔 ${n((status.requestIntervalMs??12000)/1000)} 秒 · 从已保存进度继续。`):t(`Up to ${n(status.daily.maxRequests)} requests per 10 minutes · ${n((status.requestIntervalMs??12000)/1000)}s apart · resumes saved progress.`,`每 10 分钟最多 ${n(status.daily.maxRequests)} 次请求 · 间隔 ${n((status.requestIntervalMs??12000)/1000)} 秒 · 从已保存进度继续。`)}</small>{status.daily.lastFinishedAt&&<small className="daily-last">{t('Last batch: ','上次批次：')}{date(status.daily.lastFinishedAt)}</small>}</div><button disabled={busy||!!snapshotBase||status.cloudManaged} onClick={()=>action(status.daily?.enabled&&!status.daily.blockedReason?'daily-disable':'daily-enable')}>{status.daily.enabled&&!status.daily.blockedReason?t('Pause scheduled job','暂停自动任务'):t('Enable scheduled job','开启自动任务')}</button></div>}
-  {status&&!status.initialPassComplete&&<p className="backfill-note">{t('Initial backfill advances gradually, saving posts and checkpoints throughout each run. Subsequent runs continue from the saved position until the first accessible-topic pass completes.','首次回填逐步推进，每批持续保存帖子与进度，后续运行会从保存位置继续，直到首轮可访问话题扫描完成。')}</p>}
-  {status?.cloudManaged&&<p className="sync-current">{t(status.runner==='local'?'Local backfill · saved public data updates here automatically.':'Cloud backfill · updates arrive automatically as posts are saved.',status.runner==='local'?'本地逐步回填 · 保存公开数据后会自动更新图谱。':'云端逐步回填 · 帖子保存后会自动更新图谱。')}</p>}
 
-  {!status?.configured&&<p className="sync-note">{t('Setup required: the forum’s terms restrict automated crawling. An authorized operator must configure server access first. Collection waits until access is configured.','需要配置：论坛条款限制自动抓取，请由获得授权的操作人员先配置服务端访问。配置完成前不会发起采集。')} <a href="https://www.uscardforum.com/tos" target="_blank" rel="noreferrer">{t('Forum terms','论坛条款')}</a></p>}
-  {status?.currentTopic&&<p className="sync-current">{t('Reading: ','正在读取：')}{status.currentTopic}</p>}
-  {status?.retryAt&&<p role="status">{t('Respecting the rate limit. Next attempt: ','正在等待频率限制解除，下次尝试：')}{date(status.retryAt)}</p>}
-  <div className="sync-actions"><button className="primary" disabled={busy||!!snapshotBase||!status?.configured||status.cloudManaged} onClick={()=>action(status?.state==='running'?'pause':!status?.initialPassComplete?'backfill':'start')}>{status?.state==='running'?t('Pause collection','暂停采集'):!status?.initialPassComplete?t('Start / resume initial backfill','开始／继续首次回填'):status?.state==='complete'?t('Start a new pass','开始新一轮'):status?.state==='idle'?t('Collect a batch now','立即收录一批'):t('Resume sync','继续同步')}</button><span className="auto-load-label">{t('Collected data appears in the graph automatically.','已收录数据会自动加载到图谱。')}</span></div>
-  {status?.storage&&<p className="sync-storage">{t('Data storage: ','数据存储：')}<strong>{status.storage.backend==='s3'?t('Amazon S3 · local cache','Amazon S3 · 本地缓存'):t('Local files','本地文件')}</strong></p>}
-  {status?.updatedAt&&<small>{t('Last saved: ','上次保存：')}{date(status.updatedAt)}</small>}
-  </div></details>
  </section>;
 }
