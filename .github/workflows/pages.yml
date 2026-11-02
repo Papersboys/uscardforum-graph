@@ -25,7 +25,8 @@ jobs:
       - run: npm run build
         env:
           VITE_BASE_PATH: /uscardforum-graph/
-          VITE_STATIC_PREVIEW: ${{ vars.FORUM_API_BASE_URL == '' && 'true' || 'false' }}
+          VITE_STATIC_PREVIEW: ${{ vars.FORUM_API_BASE_URL == '' && vars.FORUM_SNAPSHOT_BASE_URL == '' && 'true' || 'false' }}
+          VITE_SNAPSHOT_BASE_URL: ${{ vars.FORUM_SNAPSHOT_BASE_URL }}
           VITE_API_BASE_URL: ${{ vars.FORUM_API_BASE_URL }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v4

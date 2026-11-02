@@ -20,7 +20,7 @@ const userKey=cloudManaged?undefined:await readUserApiKey(dataDirectory);
 const publishLocally=!cloudManaged&&process.env.FORUM_PUBLISH_PUBLIC==='true';
 let categories:Set<number>|undefined;
 if(publishLocally&&userKey){const response=await fetch('https://www.uscardforum.com/categories.json?include_subcategories=true',{headers:{Accept:'application/json','User-Agent':'ForumAtlas/1.0 (authorized topic synchronization)','User-Api-Key':userKey},signal:AbortSignal.timeout(30000)});if(!response.ok)throw Error('Cannot verify public category visibility');categories=publicCategoryIds(await response.json());}
-const publish=publishLocally&&cloudRemote?localPublisher(cloudRemote,()=>sync):undefined;
+const publish=publishLocally&&cloudRemote?localPublisher(cloudRemote,()=>sync,()=>daily.status()):undefined;
 const sync:ForumSync=new ForumSync(dataDirectory,{
  authorized:!cloudManaged&&(!!userKey||process.env.FORUM_SYNC_AUTHORIZED==='true'&&(!process.env.FORUM_API_KEY||!!process.env.FORUM_API_USERNAME)),userKey,
  publicCategoryIds:categories,onProgress:publish,

@@ -111,14 +111,12 @@ export class ForumSync {
  }
  async graph(publicOnly=false){
   await this.ready;
-  // Keep visualization bounded. The complete archive remains on disk.
+  // Include the entire collected archive; visibility filtering still applies to public snapshots.
   const files=(await this.archive.topics()).filter(f=>/^\d+\.json$/.test(f)).sort((a,b)=>parseInt(b)-parseInt(a));
-  const topics:StoredTopic[]=[];let postCount=0;
-  for(const file of files){if(topics.length>=200||postCount>=20000)break;const topic:StoredTopic=JSON.parse(await this.archive.read(`topics/${file}`));if(publicOnly&&!topic.public)continue;topics.push(publicOnly?{...topic,posts:topic.posts.filter(p=>(p as Post&{post_type?:number}).post_type===undefined||(p as Post&{post_type?:number}).post_type===1)}:topic);postCount+=topic.posts.length;}
-  const graph=buildGraph(topics);const allUsers=graph.users.length;
-  graph.users=graph.users.sort((a,b)=>b.posts-a.posts).slice(0,2000);const ids=new Set(graph.users.map(u=>u.id));graph.edges=graph.edges.filter(e=>ids.has(e.from)&&ids.has(e.to)).slice(0,20000);
-  graph.topicDetails=graph.topicDetails?.map(t=>({...t,users:t.users.filter(id=>ids.has(id))}));
-  if(topics.length<files.length||allUsers>2000||graph.edges.length>=20000)graph.warnings.push('Archive preview: latest 200 collected topics, up to 2,000 users and 20,000 relationships. Full archive remains on the server.');
+  const topics:StoredTopic[]=[];
+  for(const file of files){const topic:StoredTopic=JSON.parse(await this.archive.read(`topics/${file}`));if(publicOnly&&!topic.public)continue;topics.push(publicOnly?{...topic,posts:topic.posts.filter(p=>(p as Post&{post_type?:number}).post_type===undefined||(p as Post&{post_type?:number}).post_type===1)}:topic);}
+  const graph=buildGraph(topics);
+  graph.users.sort((a,b)=>b.posts-a.posts);
   if(!this.checkpoint.finished)graph.warnings.push('Synchronization is incomplete; this is collected data only.');
   if(topics.some(t=>!t.complete))graph.warnings.push('Some collected topics have incomplete post streams.');
   return graph;

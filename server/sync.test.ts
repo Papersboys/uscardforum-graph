@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,rm,mkdir,writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {ForumSync} from './sync.ts';
@@ -38,4 +38,17 @@ test('public snapshots omit restricted/unverified topics and whisper posts',()=>
  await archive.write('topics/2.json',{id:2,title:'Restricted',public:false,complete:true,stream:[3],posts:[{id:3,username:'PrivateUser',post_number:1}]});
  await archive.write('topics/3.json',{id:3,title:'Unverified',complete:true,stream:[4],posts:[{id:4,username:'UnknownUser',post_number:1}]});
  const sync=new ForumSync(dir,{authorized:true},archive);const graph=await sync.graph(true);assert.deepEqual(graph.users.map(u=>u.username),['PublicUser']);assert.equal(graph.topics,1);assert.equal((await sync.graph()).topics,3);
+}));
+
+test('graph retains the full archive beyond former preview caps and public filtering stays enforced',()=>fixture(async dir=>{
+ await mkdir(path.join(dir,'topics'));
+ for(let id=1;id<=201;id++){
+  const posts=Array.from({length:101},(_,index)=>({id:id*1000+index,username:`user${id}_${index}`,post_number:index+1,...(index?{reply_to_post_number:1}:{})}));
+  await writeFile(path.join(dir,'topics',`${id}.json`),JSON.stringify({id,title:`Topic ${id}`,posts,stream:posts.map(p=>p.id),complete:true,public:id!==1}));
+ }
+ const sync=new ForumSync(dir,{authorized:false});
+ const graph=await sync.graph();
+ assert.equal(graph.topics,201);assert.equal(graph.users.length,20301);assert.equal(graph.edges.length,20100);
+ assert.ok(graph.users.some(u=>u.id==='user1_100'));assert.ok(!graph.warnings.some(w=>w.startsWith('Archive preview:')));
+ const publicGraph=await sync.graph(true);assert.equal(publicGraph.topics,200);assert.equal(publicGraph.users.length,20200);assert.ok(!publicGraph.users.some(u=>u.id.startsWith('user1_')));
 }));

@@ -10,7 +10,7 @@ A bilingual USCardForum interaction explorer built with React, TypeScript, Vite,
 
 在线地址：**https://papersboys.github.io/uscardforum-graph/**
 
-GitHub Pages hosts the frontend. The Lambda API and EventBridge schedule have been removed; collection currently runs locally and saves to private S3. The Pages site cannot receive live updates from the removed API. Use [the local app](http://localhost:5173/) to follow current collection. 当前采集在本地运行并保存到私有 S3；Pages 原实时 API 已删除，请在本地页面查看采集进度。
+GitHub Pages hosts the frontend and reads verified-public snapshots from private S3 through [CloudFront](https://dohms6784tku4.cloudfront.net/status.json). Collection runs locally and saves incremental progress to S3. The online graph and member directory refresh every ten seconds; visitors do not need access to the collector’s computer. Lambda and EventBridge remain removed. 本地采集逐步写入私有 S3，Pages 通过 CloudFront 每十秒读取公开快照，用户列表自动更新，不依赖访问者连接本地服务。
 
 ## Current status / 当前状态
 
@@ -87,7 +87,7 @@ USCardForum's [terms](https://www.uscardforum.com/tos) restrict automated access
 
 The scheduler starts when due and access is configured; **Collect a batch now** starts an optional manual batch. Collected data appears automatically. Requests are sequential with a minimum twelve-second interval. HTTP 429 / 5xx retries use exponential waits and honor `Retry-After`; 401/403 stop immediately. Interrupted batches are saved and missing IDs retried on resume. Unavailable threads or incomplete post streams stop with a visible error rather than silently claiming completion. A persisted server job is enabled by default and waits for configured access. Each run makes at most 50 requests, twelve seconds apart, then saves its place for the next ten-minute interval. A completed discovery pass starts again on the next run to refresh threads. The UI exposes next-run status and a pause switch; pausing collection also disables the automatic schedule. Access/data errors hold the schedule until explicitly resumed. Progress polling every three seconds reads the local service only.
 
-The graph preview uses up to 200 topics (highest topic IDs), a 20,000-post soft budget, 2,000 most prolific users, and 20,000 relationships to keep the visualization usable. A single large topic can exceed the post budget. The full collected topic archive stays on disk; preview metrics describe only the displayed dataset. Existing archive files persist even when a later pass cannot retrieve a topic; this is an archive, not a deletion-mirroring service. Protect the local data directory according to its contents.
+The graph includes all collected topics, users, posts, and relationships without fixed preview caps. Public snapshots still exclude content that has not been verified public. Existing archive files persist even when a later pass cannot retrieve a topic; this is an archive, not a deletion-mirroring service. Protect the local data directory according to its contents.
 
 Missing parent posts do not produce inferred edges. Each directed edge represents an explicit reply or an HTML `mention` link, aggregates repeated interactions, and preserves source post links. Self-interactions are excluded. Interactions are not evidence of friendship. Avatar colors identify users, not inferred communities.
 
@@ -161,7 +161,7 @@ src/
   topics/<id>.json    Collected post streams
 ```
 
-Back up the complete data directory to retain both the archive and collection progress. The graph preview is bounded; exporting the graph does not export every archived thread.
+Back up the complete data directory to retain both the archive and collection progress. Graph exports contain the derived graph for the collected archive; raw topic JSON files remain a separate archive backup.
 
 ## Local API
 
@@ -186,7 +186,7 @@ POST routes require the `X-Atlas-Request: 1` header. This is a local cross-origi
 | HTTP 429 or temporary server errors | The collector respects `Retry-After` and retries with increasing waits, within its request budget. |
 | Schedule is held after an error | Resolve the access/data problem, then use the schedule resume control. |
 | No background progress while the laptop is asleep | Run the app on an always-on host with persistent storage. |
-| Archive counts exceed graph counts | Expected: the visual preview is limited to keep the browser responsive. |
+| Public snapshot counts are below archive counts | Public snapshots exclude restricted or unverified categories and whisper posts. |
 
 This is an independent community visualization project, not an official USCardForum product.
 
@@ -234,7 +234,7 @@ The layered ring layout places each distance level on a separate ring with a bad
 
 ## GitHub Pages deployment
 
-`.github/workflows/pages.yml` tests, builds, and publishes `dist/` on pushes to `main` or manual workflow dispatch. The build uses `VITE_BASE_PATH=/uscardforum-graph/`; `VITE_STATIC_PREVIEW` is selected from whether `FORUM_API_BASE_URL` is configured. If the repository variable `FORUM_API_BASE_URL` is set, the build connects to that read-only API; otherwise static preview mode disables API polling and clearly labels the demo. No AWS credentials or forum keys are configured in this workflow. The dependency lockfile uses the public npm registry so GitHub-hosted runners do not need an internal registry.
+`.github/workflows/pages.yml` tests, builds, and publishes `dist/` on pushes to `main` or manual workflow dispatch. The build uses `VITE_BASE_PATH=/uscardforum-graph/`; `VITE_STATIC_PREVIEW` is selected from whether `FORUM_API_BASE_URL` is configured. If the repository variable `FORUM_API_BASE_URL` is set, the build connects to that read-only API; otherwise static preview mode disables API polling and clearly labels the demo. `FORUM_SNAPSHOT_BASE_URL` takes precedence over the legacy API setting and is passed to `VITE_SNAPSHOT_BASE_URL`. No AWS credentials or forum keys are configured in this workflow. The dependency lockfile uses the public npm registry so GitHub-hosted runners do not need an internal registry.
 
 Local development keeps the normal `/` base path and API connection. To reproduce the Pages build locally, run `VITE_BASE_PATH=/uscardforum-graph/ VITE_STATIC_PREVIEW=true npm run build`.
 
@@ -246,7 +246,7 @@ The optional worker **`uscardforum-graph-backfill`** runs in `us-west-2`. EventB
 
 The worker writes each topic/post batch to `archive/topics/`, then updates public graph/status snapshots while the invocation is still running (normally no more often than every ten seconds). **It does not wait for the whole backfill to finish.** Pages polls status every ten seconds and reloads the graph after saved progress changes. A prefix-scoped S3 conditional-write lease and reserved concurrency of one prevent overlapping cloud collectors. Do not run the local writer against the same archive; use `FORUM_COLLECTOR_MODE=cloud` for local read-through access to cloud snapshots.
 
-The S3 bucket stays private. Only topics explicitly verified as public from category visibility metadata are eligible for `public/graph.json`. Unknown categories, restricted categories, private-message archetypes, and whisper post types are excluded from that snapshot. Existing archive files without verified public metadata are also excluded until refreshed. A separate read-only Lambda API role can read only `public/*`; it cannot access raw archives or Secrets Manager. Its public Function URL supports GET `/api/sync` and `/api/graph`, with CORS for the Pages origin. Publication uses the same bounded graph preview limits as the app.
+The S3 bucket stays private. Only topics explicitly verified as public from category visibility metadata are eligible for `public/graph.json`. Unknown categories, restricted categories, private-message archetypes, and whisper post types are excluded from that snapshot. Existing archive files without verified public metadata are also excluded until refreshed. A separate read-only Lambda API role can read only `public/*`; it cannot access raw archives or Secrets Manager. Its public Function URL supports GET `/api/sync` and `/api/graph`, with CORS for the Pages origin. Publication includes all eligible public archive data.
 
 The approved read-only forum key is stored in **Secrets Manager** at `uscardforum-graph/forum-readonly`; only the worker role can retrieve it. The RSA private key stays local. The deployment workflow has no forum key or AWS credentials.
 
@@ -270,6 +270,12 @@ The manual event resumes a held error after the access/storage problem has been 
 
 A diagnostic request confirmed that the same approved user key returns HTTP 200 locally but receives a Cloudflare challenge from AWS (`cf-mitigated: challenge`, HTTP 403). The precise Cloudflare rule is not known. Both project Lambda functions and the ten-minute EventBridge schedule were subsequently deleted; S3 archives were preserved.
 
-Local collection uses `FORUM_COLLECTOR_MODE=local` and `FORUM_PUBLISH_PUBLIC=true`. It verifies category visibility and writes public-only snapshots to the private S3 bucket while collecting. The local app refreshes automatically. Keep the local server running; there is currently no hosted snapshot API for Pages. Do not redeploy cloud collection unless the forum permits its requests.
+Local collection uses `FORUM_COLLECTOR_MODE=local` and `FORUM_PUBLISH_PUBLIC=true`. It verifies category visibility and writes public-only snapshots to the private S3 bucket while collecting. The local app refreshes automatically. Keep the collector running to obtain new data. Pages reads the last saved public snapshots from S3 through CloudFront, even when the collector is offline. Do not redeploy cloud collection unless the forum permits its requests.
 
-已改为本地采集，保留私有 S3 存档。首次回填从已保存位置逐步推进，本地页面自动刷新；需要保持电脑和本地服务运行。Pages 的原实时 API 已删除。
+已改为本地采集，保留私有 S3 存档。首次回填从已保存位置逐步推进，本地页面自动刷新；需要保持电脑和本地服务运行。Pages 的原 Lambda API 已删除，现通过 CloudFront 读取 S3 公开快照。
+
+## S3 snapshots for Pages / Pages 读取 S3
+
+Run `python3 scripts/deploy-snapshots.py` to provision the project-specific CloudFront origin access control and short-cache distribution. The bucket retains Block Public Access. Its policy permits only this distribution to read `public/graph.json` and `public/status.json`; raw `archive/` data and credentials cannot be read through it. CORS permits the Pages origin. The distribution caches snapshots for five seconds by default.
+
+Set the public GitHub repository variable `FORUM_SNAPSHOT_BASE_URL` to the distribution HTTPS URL and rebuild Pages. Frontend polling fetches only those two JSON files every ten seconds and when the browser becomes active. The member directory, graph and analysis share the same refreshed dataset. This serving path uses no Lambda or scheduled cloud collection.

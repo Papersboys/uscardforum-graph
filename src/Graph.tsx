@@ -12,7 +12,7 @@ export default function Graph({data,edges,depths,selected,layout,zh,onSelect,onE
  const instance=RGHooks.useGraphInstance();const current=useRef({edges,onEdge,onSelect,selected,path,showWeights,zh});current.current={edges,onEdge,onSelect,selected,path,showWeights,zh};
  const highlight=useCallback((id:string)=>{
   const activePath=current.current.path;
-  const maxWeight=Math.max(0,...current.current.edges.map(edge=>edge.weight));
+  const maxWeight=current.current.edges.reduce((max,edge)=>Math.max(max,edge.weight),0);
   instance.updateOptions({checkedNodeId:id});
   for(const line of instance.getLines()){
    const pathEdge=pathIncludesEdge(activePath,line);
